@@ -110,7 +110,7 @@ const fechaISO = (d, m, a) => `${a}-${m}-${d}`;
 // Código del banco a partir del nombre que muestra BancoEstado: el nombre
 // exacto del catálogo, una de sus partes ("BANCO DE CHILE / A. EDWARDS / ...")
 // o una parte distintiva contenida en el nombre ("BANCO SANTANDER-CHILE").
-const OTROS_NOMBRES = { "BANCO DE CREDITO E INVERSIONES": "016", "BANCO ITAU CHILE": "039", "SCOTIABANK CHILE": "014", "BANCO BICE": "028" };
+const OTROS_NOMBRES = { "BANCOESTADO": "012", "BANCO ESTADO": "012", "BANCO DE CREDITO E INVERSIONES": "016", "BANCO ITAU CHILE": "039", "SCOTIABANK CHILE": "014", "BANCO BICE": "028" };
 export function codigoBanco(nom) {
   const n = cleanName(nom);
   if (!n) return "";

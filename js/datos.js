@@ -227,6 +227,15 @@ export async function agregarAbonos(prep, origen) {
   const ops = prep.abonos.map(a => b => b.set(refAbono(nuevoIdDoc()), { ...a, createdAt: serverTimestamp(), createdBy: st.email, ...f() }));
   if (prep.nuevasFuentes.length) ops.push(opConfig({ fuentes: prep.fuentes }));
   if (prep.abonos.length) ops.push(b => b.set(refHist(), hist("agregar abonos", "abonos", `${prep.abonos.length} abonos por ${money(prep.abonos.reduce((t, a) => t + a.monto, 0))} (${Object.entries(prep.byF).map(([k, n]) => k + " " + n).join(", ")})${origen ? " desde " + origen : ""}`)));
+  // Abonos pendientes con banco o forma inválidos (importados antes en texto): se corrigen
+  // con los datos del archivo, y el historial guarda el antes y el después completos.
+  (prep.corregir || []).forEach(({ id, antes, despues }) => {
+    const cambios = CAMPOS_ABONO.filter(k => S(antes[k]) !== S(despues[k]));
+    if (!cambios.length) return;
+    const sub = o => Object.fromEntries(CAMPOS_ABONO.map(k => [k, k === "monto" ? o[k] : S(o[k])]));
+    ops.push(b => b.update(refAbono(id), { ...Object.fromEntries(cambios.map(k => [k, despues[k] ?? ""])), ...f() }));
+    ops.push(b => b.set(refHist(), hist("cambio datos bancarios abono", "abonos", `${fmtRut(despues.rut)} ${despues.nombre} (${money(despues.monto)}): corregido al importar${origen ? " " + origen : ""}; cambia ${cambios.join(", ")}`, sub(antes), sub(despues))));
+  });
   await enLotes(ops);
 }
 // Edita un abono pendiente. Si cambian los datos bancarios, el historial

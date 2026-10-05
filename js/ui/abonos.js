@@ -23,13 +23,17 @@ const prefijoSugerido = r => today() + "_" + conceptoDe(r).replace(/ /g, "_");
 const nombreArchivo = r => fileName($("abPrefijo").value || prefijoSugerido(r), r.fuente, new Date(), st.config.fuentes);
 
 async function ingestar(filas, origen, concepto) {
-  const prep = prepararAbonos(filas, { fuentes: st.config.fuentes, defFuente: prefs.abDefFuente || st.config.fuentes[0], concepto });
-  if (!prep.abonos.length && !prep.rechazados.length) { toast("No se reconocieron filas. Revisa el orden de las columnas."); return false }
+  const prep = prepararAbonos(filas, { fuentes: st.config.fuentes, defFuente: prefs.abDefFuente || st.config.fuentes[0], concepto, pendientes: st.abonos });
+  if (!prep.abonos.length && !prep.rechazados.length && !prep.corregir.length && !prep.repetidos) { toast("No se reconocieron filas. Revisa el orden de las columnas."); return false }
   await agregarAbonos(prep, origen);
   let msg = prep.abonos.length ? `Agregado: ${prep.abonos.length} abonos por ${money(prep.abonos.reduce((t, a) => t + a.monto, 0))} (${Object.entries(prep.byF).map(([f, n]) => f + " " + n).join(", ")}), concepto ${concepto || "REMUNERACIONES"}` : "";
   if (prep.corregidos) msg += `. ${prep.corregidos} nombre${prep.corregidos > 1 ? "s" : ""} pasado${prep.corregidos > 1 ? "s" : ""} a mayúsculas sin tildes`;
   if (prep.nuevasFuentes.length) msg += ". Fuente nueva: " + prep.nuevasFuentes.join(", ");
   if (prep.rechazados.length) msg += `. ${prep.rechazados.length} fila${prep.rechazados.length > 1 ? "s" : ""} sin monto válido no se agregó`;
+  if (prep.corregir.length) msg += `${msg ? ". " : ""}${prep.corregir.length} pendiente${prep.corregir.length > 1 ? "s" : ""} con banco y forma de pago corregidos (concepto ${concepto || "REMUNERACIONES"})`;
+  if (prep.repetidos) msg += `${msg ? ". " : ""}${prep.repetidos} ya estaba${prep.repetidos > 1 ? "n" : ""} pendiente${prep.repetidos > 1 ? "s" : ""} y no se duplic${prep.repetidos > 1 ? "aron" : "ó"}`;
+  const malos = prep.abonos.filter(a => checkAbono(a, st.config.emailDefecto).e.length).length;
+  if (malos) msg += `. ${malos} con datos por revisar (● revisar)`;
   toast(msg);
   return true;
 }

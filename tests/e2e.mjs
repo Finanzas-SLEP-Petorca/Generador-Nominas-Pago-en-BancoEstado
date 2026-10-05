@@ -689,6 +689,37 @@ try {
     enFs = await docsBanco();
     assert.deepEqual(enFs.map(d => [d.ndoc, d.tipo]), [["8001", "33"], ["8002", "34"]]);
     log("Detalle de Nómina del banco por documento: tipo en texto → código, monto de cada documento, fuente desde el nombre de la nómina, sin duplicar y corrige el tipo vacío");
+
+    // Remuneraciones: el Detalle de Nómina del banco (una fila por pago) con banco y forma en texto.
+    const [Ra, Rb] = ["15151515", "16161616"].map(b => b + dv(b));
+    const wsR = XLSX.utils.aoa_to_sheet([["Mis Nóminas - Remuneraciones - Ver Nómina"], [], ["Fecha : Oct 5, 2026, 2:35:22 PM"], [], ["Detalle Nómina"],
+      ["Convenio", "SLEP EJEMPLO REMUNERACIONES(REM-000)", "Nº Nómina", 900200], ["Nombre Nómina", "P02_FONDO_FIJO_EE_GENERAL", "Monto Total $", "$30.000"],
+      ["Cantidad Pagos", "2", "Fecha Pago", "05/10/2026"], ["Concepto Pago", "Anticipos", "Estado Nómina Pagos", "Aceptada"], [],
+      ["Rut", "Nombre", "Fecha Abono", "Forma Abono", "Banco", "Código Propio", "N° Cuenta", "Estado Abono", "Motivo", "Monto Abono"],
+      [fmt(Ra), "Persona Caja Uno  ", "05/10/2026", "Pago Cash", "BANCOESTADO", "", "", "Pendiente de Cobro", "    ", "$ 10.000"],
+      [fmt(Rb), "Persona Caja Dos", "05/10/2026", "Abono en CuentaRUT", "BANCOESTADO", "", Rb.slice(0, -1), "Pagado", "", "$ 20.000"]]);
+    const wbR = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wbR, wsR, "DetalleNomina");
+    const archivoR = { name: "Detalle_Nomina_N__900200_-_prueba.xlsx", mimeType: archivo.mimeType, buffer: Buffer.from(XLSX.write(wbR, { type: "array", bookType: "xlsx" })) };
+    const abonosBanco = () => A.evaluate(async ruts => {
+      const fs = await import("https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js");
+      const q = await fs.getDocs(fs.collection(fs.getFirestore(), "pago_abonos"));
+      return q.docs.map(d => ({ id: d.id, ...d.data() })).filter(a => ruts.includes(a.rut)).map(a => ({ id: a.id, rut: a.rut, banco: a.banco, forma: a.forma, cuenta: a.cuenta, fuente: a.fuente, concepto: a.concepto })).sort((x, y) => x.rut.localeCompare(y.rut));
+    }, [Ra, Rb]);
+    await A.click('.steps button[data-step="6"]');
+    await A.setInputFiles("#abArchivo", archivoR);
+    await esperar(A, () => /Agregado: 2 abonos por \$30\.000 \(GENERAL 2\), concepto FONDOS FIJOS/.test(document.getElementById("toast").textContent));
+    let ab = await abonosBanco();
+    assert.deepEqual(ab.map(a => [a.banco, a.forma, a.cuenta, a.fuente, a.concepto]), [["012", "29", "", "GENERAL", "FONDOS FIJOS"], ["012", "30", Rb.slice(0, -1), "GENERAL", "FONDOS FIJOS"]]);
+    // Uno quedó como lo dejaba la versión anterior (banco y forma vacíos): al subirlo de nuevo se corrige y nada se duplica.
+    await A.evaluate(async id => {
+      const fs = await import("https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js");
+      await fs.updateDoc(fs.doc(fs.getFirestore(), "pago_abonos", id), { banco: "", forma: "", concepto: "REMUNERACIONES", updatedBy: "admin1@example.com", updatedAt: fs.serverTimestamp() });
+    }, ab[0].id);
+    await A.setInputFiles("#abArchivo", archivoR);
+    await esperar(A, () => /1 pendiente con banco y forma de pago corregidos \(concepto FONDOS FIJOS\)\. 1 ya estaba pendiente y no se duplicó/.test(document.getElementById("toast").textContent));
+    ab = await abonosBanco();
+    assert.deepEqual(ab.map(a => [a.banco, a.forma, a.concepto]), [["012", "29", "FONDOS FIJOS"], ["012", "30", "FONDOS FIJOS"]]);
+    log("Detalle de Nómina de Remuneraciones del banco: banco y forma en texto → códigos, concepto y fuente desde el nombre de la nómina, corrige lo mal importado sin duplicar");
   }
 
   // ---------- feriados ----------

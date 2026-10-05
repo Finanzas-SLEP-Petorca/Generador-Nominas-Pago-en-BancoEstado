@@ -3,7 +3,7 @@
 // Misma lógica que el panel de referencia, más la columna DC opcional.
 
 import { S, normRut, rutOk, parseFecha, cleanName, normFuente, pad, normCuenta, parseMonto, normDc, conceptoDeNombre } from "./formato.js";
-import { TIPOS, M_TIPO } from "./catalogos.js";
+import { TIPOS, M_TIPO, M_BANCO, M_FORMA_ABONO, FORMAS_SIN_CUENTA } from "./catalogos.js";
 import { codigoBanco } from "./comprobante.js";
 
 // Tipo de documento: el código del SII ("33", "33 Factura…") o el nombre que
@@ -25,14 +25,17 @@ export function tipoDoc(v) {
 // repite en cada documento del mismo pago) y "Monto $" (el del documento).
 // Las columnas se reconocen por su encabezado exacto, no por su posición.
 const llave = v => S(v).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[º°]/g, "").replace(/\s+/g, " ").trim();
+// "Nombre Nómina" de la cabecera del Detalle de Nómina (ej. PAGO_PROVEEDORES_FAEP), o "".
+export function nombreNominaBanco(rows) {
+  for (const r of rows.slice(0, 15)) for (const c of [0, 2]) if (llave(r && r[c]) === "nombre nomina") return S(r[c + 1]);
+  return "";
+}
 export function detalleBancoPorDocumento(rows) {
   for (let i = 0; i < Math.min(rows.length, 30); i++) {
     const h = (rows[i] || []).map(llave), col = re => h.findIndex(x => re.test(x));
     const m = { rut: col(/^rut$/), nombre: col(/^nombre$/), banco: col(/^banco$/), forma: col(/^(forma|tipo) abono$/), ndoc: col(/^n documento$/), tipo: col(/^tipo documento$/), fecha: col(/^fecha emision$/), monto: col(/^monto \$$/) };
     if (m.rut < 0 || m.ndoc < 0 || m.tipo < 0 || m.monto < 0) continue;
-    let nombreNomina = "";
-    for (const r of rows.slice(0, i)) for (const c of [0, 2]) if (llave(r && r[c]) === "nombre nomina") nombreNomina = S(r[c + 1]);
-    return { inicio: i + 1, m, nombreNomina };
+    return { inicio: i + 1, m, nombreNomina: nombreNominaBanco(rows.slice(0, i)) };
   }
   return null;
 }
@@ -213,6 +216,23 @@ export async function readFile(file, fuentes) {
 // y opcionales ⇥ Fuente ⇥ Glosa. Acepta la hoja DETALLE del banco
 // (encabezado en la fila 3) o filas pegadas, con o sin encabezado.
 // =====================================================================
+// Banco y forma de pago: el código ("012", "30") o el texto que escribe
+// BancoEstado en su Detalle de Nómina ("BANCO DEL ESTADO DE CHILE",
+// "Abono en CuentaRUT", "Abono en Cuenta Corriente / Cuenta Vista", "Pago Cash").
+export const bancoCodigo = v => typeof v === "number" || /^\s*\d+\s*$/.test(S(v)) ? pad(v, 3) : codigoBanco(v);
+export function formaAbono(v) {
+  if (typeof v === "number" || /^\s*\d+\s*$/.test(S(v))) return pad(v, 2);
+  const t = cleanName(v);
+  if (!t) return "";
+  if (/CUENTA ?RUT/.test(t)) return "30";
+  if (/AHORRO/.test(t)) return "02";
+  if (/CHEQUERA/.test(t)) return "22";
+  if (/CASH/.test(t)) return "29";
+  if (/VALE VISTA/.test(t)) return ""; // el banco usa varios códigos para vale vista: que lo elija la persona
+  if (/CORRIENTE|VISTA|CUENTA/.test(t)) return "01";
+  return "";
+}
+
 const RXA = {
   rut: /^rut/, nombre: /nombre|raz|beneficiario/, email: /mail|correo/, banco: /banco/,
   forma: /forma|medio/, cuenta: /cuenta/, monto: /monto|importe|total/, fuente: /fuente|financiamiento|subvenci|programa/, glosa: /glosa|detalle|concepto|observ|motivo/
@@ -229,7 +249,7 @@ function headerMapAbonos(row) {
 export function ingestAbonos(rows) {
   rows = rows.filter(r => r && r.some(c => S(c) !== ""));
   let map = null, start = 0;
-  for (let i = 0; i < Math.min(rows.length, 10); i++) {
+  for (let i = 0; i < Math.min(rows.length, 20); i++) {
     const m = headerMapAbonos(rows[i]);
     if ("rut" in m && "monto" in m && !rutOk(normRut(rows[i][m.rut]))) { map = m; start = i + 1; break }
   }
@@ -245,36 +265,53 @@ export function ingestAbonos(rows) {
 
 // Normaliza lo ingerido. Rechaza (no guarda) los de monto inválido, como en
 // documentos: Firestore exige monto entero mayor que cero.
-export function prepararAbonos(filas, { fuentes, defFuente, concepto }) {
-  const abonos = [], rechazados = [], nuevasFuentes = [], byF = {};
+export function prepararAbonos(filas, { fuentes, defFuente, concepto, pendientes = [] }) {
+  const abonos = [], rechazados = [], nuevasFuentes = [], byF = {}, corregir = [];
   const todas = [...fuentes];
-  let corregidos = 0;
+  let corregidos = 0, repetidos = 0;
+  // Pendientes del mismo RUT y monto: si ya está igual, no se repite; si quedó
+  // con banco o forma inválidos (una importación anterior), se corrige.
+  const libres = [...pendientes];
+  const valido = a => M_BANCO[a.banco] && M_FORMA_ABONO[a.forma];
   filas.forEach(a => {
     const f = normFuente(a.fuente) || defFuente;
     const nombre = cleanName(a.nombre);
     if (nombre && nombre !== S(a.nombre).replace(/\s+/g, " ")) corregidos++;
-    const o = { rut: normRut(a.rut), nombre, email: S(a.email), banco: pad(a.banco, 3), forma: pad(a.forma, 2), cuenta: normCuenta(a.cuenta), monto: parseMonto(a.monto), fuente: f, concepto: S(concepto) || "REMUNERACIONES", sel: true };
+    const forma = formaAbono(a.forma);
+    const o = { rut: normRut(a.rut), nombre, email: S(a.email), banco: bancoCodigo(a.banco), forma, cuenta: FORMAS_SIN_CUENTA.has(forma) ? "" : normCuenta(a.cuenta), monto: parseMonto(a.monto), fuente: f, concepto: S(concepto) || "REMUNERACIONES", sel: true };
     const gl = S(a.glosa).replace(/\s+/g, " ").slice(0, 80); if (gl) o.glosa = gl;
     if (!(Number.isInteger(o.monto) && o.monto > 0)) { rechazados.push({ ...o, montoOriginal: S(a.monto) }); return }
+    const mismo = libres.findIndex(p => p.rut === o.rut && p.monto === o.monto && p.banco === o.banco && p.forma === o.forma && S(p.cuenta) === o.cuenta);
+    if (mismo >= 0) { libres.splice(mismo, 1); repetidos++; return }
+    const roto = valido(o) ? libres.findIndex(p => p.rut === o.rut && p.monto === o.monto && !valido(p)) : -1;
+    if (roto >= 0) {
+      const p = libres.splice(roto, 1)[0];
+      corregir.push({ id: p.id, antes: p, despues: { ...p, nombre: o.nombre || p.nombre, banco: o.banco, forma: o.forma, cuenta: o.cuenta, fuente: o.fuente, concepto: o.concepto } });
+      return;
+    }
     if (f && !todas.includes(f)) { todas.push(f); nuevasFuentes.push(f) }
     byF[f] = (byF[f] || 0) + 1;
     abonos.push(o);
   });
-  return { abonos, rechazados, nuevasFuentes, fuentes: todas, byF, corregidos };
+  return { abonos, rechazados, nuevasFuentes, fuentes: todas, byF, corregidos, corregir, repetidos };
 }
 
 // Lee un archivo de abonos (.xlsx/.xls de la planilla del banco, .csv o .txt).
 export async function readAbonosFile(file, fuentes) {
-  const hint = fuenteFromName(file.name, fuentes), concepto = conceptoDeNombre(file.name);
   const buf = await file.arrayBuffer();
-  let filas;
-  if (/\.(csv|txt)$/i.test(file.name)) filas = ingestAbonos(parseDelimitado(decodificar(buf)));
+  let rows;
+  if (/\.(csv|txt)$/i.test(file.name)) rows = parseDelimitado(decodificar(buf));
   else {
     if (typeof XLSX === "undefined") throw new Error("no se pudo cargar el lector de Excel. Pega las filas en su lugar");
     const wb = XLSX.read(buf, { type: "array", cellDates: false });
     const name = wb.SheetNames.find(n => /detalle/i.test(n)) || wb.SheetNames[0];
     // raw:true: los números llegan completos (sin notación científica); los códigos se rellenan con ceros después.
-    filas = ingestAbonos(XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: "" }));
+    rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: "" });
   }
-  return { filas, hint, concepto };
+  // La fuente y el concepto se deducen del nombre del archivo o, en el
+  // Detalle de Nómina del banco, del nombre de la nómina (ej. P02_FONDO_FIJO_GENERAL).
+  const nomina = nombreNominaBanco(rows);
+  const hint = fuenteFromName(file.name, fuentes) || (nomina ? fuenteFromName(nomina, fuentes) : "");
+  const concepto = conceptoDeNombre(file.name) || (nomina ? conceptoDeNombre(nomina) : "");
+  return { filas: ingestAbonos(rows), hint, concepto, nomina };
 }

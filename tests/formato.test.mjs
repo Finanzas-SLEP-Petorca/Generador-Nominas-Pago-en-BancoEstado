@@ -433,6 +433,37 @@ ok("Detalle de Nómina del banco por documento: tipo en texto, monto de cada doc
   assert.deepEqual(["33", "33 Factura electrónica", 61, "Nota de débito electrónica", "Factura exenta electrónica", "Abono en Cuenta Corriente"].map(I.tipoDoc), ["33", "33", "61", "56", "34", ""]);
 });
 
+// Detalle de Nómina de Remuneraciones del banco (una fila por pago), con datos inventados.
+ok("Detalle de Nómina de Remuneraciones del banco: banco y forma en texto, concepto y fuente del nombre de la nómina", () => {
+  const filas = [
+    ["Mis Nóminas - Remuneraciones - Ver Nómina"], [], ["Fecha : Oct 5, 2026, 2:35:22 PM"], [], ["Detalle Nómina"],
+    ["Convenio", "SLEP EJEMPLO REMUNERACIONES(REM-000)\t", "Nº Nómina", 900200],
+    ["Nombre Nómina", "P02_FONDO_FIJO_EE_GENERAL", "Monto Total $", "$61.000"],
+    ["Cantidad Pagos", "3", "Fecha Pago", "05/10/2026"], ["Concepto Pago", "Anticipos", "Estado Nómina Pagos", "Aceptada"], [],
+    ["Rut", "Nombre", "Fecha Abono", "Forma Abono", "Banco", "Código Propio", "N° Cuenta", "Estado Abono", "Motivo", "Monto Abono"],
+    ["11.111.111-1", "Persona Uno Ejemplo  ", "05/10/2026", "Abono en CuentaRUT", "BANCOESTADO", "", "11111111", "Pagado", "      ", "$ 10.000"],
+    ["22.222.222-2", "Persona Dos Ejemplo", "05/10/2026", "Abono en Cuenta Corriente / Cuenta Vista", "BANCO DE CREDITO E INVERSIONES", "", "123456789", "Pagado", "", "$ 20.000"],
+    ["33.333.333-3", "Persona Tres Ejemplo", "05/10/2026", "Pago Cash", "BANCOESTADO", "", "", "Pendiente de Cobro", "", "$ 31.000"]
+  ];
+  assert.equal(I.nombreNominaBanco(filas), "P02_FONDO_FIJO_EE_GENERAL");
+  assert.equal(F.conceptoDeNombre(I.nombreNominaBanco(filas)), "FONDOS FIJOS");
+  const fuentes = ["GENERAL", "SEP"];
+  const leidas = I.ingestAbonos(filas).map(a => ({ ...a, fuente: "GENERAL" }));
+  const p = I.prepararAbonos(leidas, { fuentes, defFuente: "SEP", concepto: "FONDOS FIJOS" });
+  assert.deepEqual(p.abonos.map(a => [a.banco, a.forma, a.cuenta, a.monto, a.nombre]), [["012", "30", "11111111", 10000, "PERSONA UNO EJEMPLO"], ["016", "01", "123456789", 20000, "PERSONA DOS EJEMPLO"], ["012", "29", "", 31000, "PERSONA TRES EJEMPLO"]]);
+  assert.deepEqual(p.abonos.map(a => F.checkAbono(a, "finanzas@ejemplo.cl").e), [[], [], []]);
+  // Ya cargados antes con banco y forma vacíos: se corrigen, y una tercera vez no se duplica.
+  const mal = p.abonos.map((a, i) => ({ ...a, id: "a" + i, banco: "", forma: "", concepto: "REMUNERACIONES", fuente: "SEP" }));
+  const p2 = I.prepararAbonos(leidas, { fuentes, defFuente: "SEP", concepto: "FONDOS FIJOS", pendientes: mal });
+  assert.equal(p2.abonos.length, 0);
+  assert.deepEqual(p2.corregir.map(c => [c.id, c.despues.banco, c.despues.forma, c.despues.concepto, c.despues.fuente]), [["a0", "012", "30", "FONDOS FIJOS", "GENERAL"], ["a1", "016", "01", "FONDOS FIJOS", "GENERAL"], ["a2", "012", "29", "FONDOS FIJOS", "GENERAL"]]);
+  const p3 = I.prepararAbonos(leidas, { fuentes, defFuente: "SEP", concepto: "FONDOS FIJOS", pendientes: p2.corregir.map(c => c.despues) });
+  assert.deepEqual([p3.abonos.length, p3.corregir.length, p3.repetidos], [0, 0, 3]);
+  // Códigos y textos de forma de pago.
+  assert.deepEqual(["30", 1, "Abono en Cuenta de Ahorro", "Chequera Electrónica", "Vale Vista", "Pago Cash", ""].map(I.formaAbono), ["30", "01", "02", "22", "", "29", ""]);
+  assert.deepEqual(["12", "BANCOESTADO", "BANCO DEL ESTADO DE CHILE", "BANCO DE CREDITO E INVERSIONES"].map(I.bancoCodigo), ["012", "012", "012", "016"]);
+});
+
 ok("index.html con las versiones de los archivos al día", () => {
   const { execFileSync } = require("node:child_process");
   execFileSync(process.execPath, [path.join(raiz, "tests/versionar.mjs"), "--revisar"], { stdio: "pipe" });
