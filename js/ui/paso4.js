@@ -1,9 +1,9 @@
 // Paso 4: bitácora de nóminas, resultado del banco e historial.
 
 import { M_TIPO, EST_PAGO } from "../catalogos.js";
-import { S, normRut, fmtRut, money, fmtFecha, fmtISO, isoLocal, todayISO, resultadoDesde, fmtDue, diaHabilSiguiente, esHabil, nombreDe, nomStatus, nombreNomina, toTxt, today, reportePagos, reporteHojas, esCobroCaja, porCobrar, noCobrado, tipoDe, TIPOS_REGISTRO, conDocumentos, conAbonos } from "../formato.js";
+import { S, normRut, fmtRut, money, fmtFecha, fmtISO, isoLocal, todayISO, resultadoDesde, fmtDue, diaHabilSiguiente, esHabil, nombreDe, nomStatus, nombreNomina, toTxt, today, reportePagos, reporteHojas, reporteNominaHojas, nombreReporteNomina, esCobroCaja, porCobrar, noCobrado, tipoDe, TIPOS_REGISTRO, conDocumentos, conAbonos } from "../formato.js";
 import { bankWorkbook, abonosWorkbook, libroReporte } from "../excel.js";
-import { pdfReporte, cargarPdf } from "../pdf.js";
+import { pdfReporte, pdfNomina, cargarPdf } from "../pdf.js";
 import { M_FORMA_ABONO } from "../catalogos.js";
 import { st, aFecha, suscribirHistorial, cargarNomina, guardarCarga, deshacerCarga, resultadoPago, pagarPendientes, cobroPago, volverPendientes, anularNomina, editarTransferencia, aplicarResultadosBanco, exportarRespaldo } from "../datos.js";
 import { leerArchivoBanco, repartir } from "../conciliar.js";
@@ -265,6 +265,8 @@ function renderNomDetail() {
   const celdaCobro = (p, i) => !esCobroCaja(n, p) || p.estado !== "pagado" ? "" : `<select class="inl" data-co="${i}" ${cargada && !p.reint ? "" : "disabled"} aria-label="Cobro en banco">${Object.entries(COBRO).map(([k, t]) => `<option value="${k}"${(p.cobro || "") === k ? " selected" : ""}>${t}</option>`).join("")}</select>${p.cobro ? `<input type="date" class="inl" data-cf="${i}" value="${esc(p.cobroFecha || "")}" ${cargada && !p.reint ? "" : "disabled"} aria-label="Fecha de ${p.cobro === "cobrado" ? "cobro" : "devolución"}" title="Fecha de ${p.cobro === "cobrado" ? "cobro" : "devolución a la cuenta"}" style="margin-top:4px;width:150px;display:block">` : ""}`;
   const due = n.fechaCarga ? resultadoDesde(n, st.config.feriados) : null;
   const pend = n.pagos.filter(p => p.estado === "pendiente").length, pag = n.pagos.filter(p => p.estado === "pagado"), rech = n.pagos.filter(p => p.estado === "rechazado");
+  // Reporte de pago de esta nómina: el respaldo de lo pagado, en Excel y PDF (no es el formato del banco).
+  const botonesReporte = `<button class="btn" id="nRepXlsx" title="Respaldo de lo pagado en esta ${tef ? "transferencia" : "nómina"}: ficha, totales, detalle, rechazos e historial">Reporte de pago (Excel)</button><button class="btn" id="nRepPdf" title="El mismo reporte en PDF">Reporte de pago (PDF)</button>`;
   const topNom = () => `
   <div class="row" style="margin-top:0;justify-content:space-between"><h2 style="margin:0">Nómina N° ${n.num}${n.operacion ? ` <span class="hint" style="font-size:.7em">· BancoEstado N° ${esc(n.operacion)}</span>` : ""}, ${esc(n.fuente)}${esAbonos(n) ? ` · remuneraciones${n.concepto ? " (" + esc(n.concepto.toLowerCase()) + ")" : ""}` : ""}</h2><span class="row" style="margin-top:0"><span class="tag ${s.c}">${esc(s.t)}</span><button class="btn small" id="nCerrar" title="Cerrar el detalle">Cerrar ✕</button></span></div>
   <p class="due">Generada el ${creada(n)}${n.creadaPor ? ` por <b title="${esc(n.creadaPor)}">${esc(nombreDe(n.creadaPor))}</b>` : ""}.${n.fechaCarga ? ` Cargada en BancoEstado el ${fmtISO(n.fechaCarga)}${n.cargadaPor ? ` por <b title="${esc(n.cargadaPor)}">${esc(nombreDe(n.cargadaPor))}</b>` : ""}.` : ""} Archivo ${esc(nombreNomina(n))}.txt. ${n.pagos.length} pago${n.pagos.length === 1 ? "" : "s"} por ${money(n.total)}.${n.fechaPago ? ` Fecha de pago: ${fmtISO(n.fechaPago)}.` : ""}${cargada ? ` Pagado ${money(pagadoDe(n))}${noCobradoDe(n) ? `, no cobrado ${money(noCobradoDe(n))}` : ""}, rechazado ${money(rech.reduce((a, p) => a + p.monto, 0))}, pendiente de resultado ${money(n.pagos.filter(p => p.estado === "pendiente").reduce((a, p) => a + p.monto, 0))}${porCobrarDe(n) ? `, por cobrar en banco ${money(porCobrarDe(n))}` : ""}.` : ""}</p>
@@ -281,6 +283,7 @@ function renderNomDetail() {
     ${cargada && pend ? `<button class="btn primary" id="nPagarRest">Marcar ${pend} pendiente${pend > 1 ? "s" : ""} como pagado${pend > 1 ? "s" : ""}</button>` : ""}
     <button class="btn" id="nTxt">Descargar .txt</button>
     <button class="btn" id="nXlsx">Descargar Excel BancoEstado</button>
+    ${cargada ? botonesReporte : ""}
     ${n.estado === "generada" ? `<button class="btn danger" id="nAnular">Anular nómina</button>` : ""}
     ${cargada && n.pagos.every(p => p.estado === "pendiente") ? `<button class="btn small" id="nDescargar" title="Vuelve al estado generada">Deshacer carga</button>` : ""}
   </div>
@@ -303,6 +306,7 @@ function renderNomDetail() {
   </div>
   <div class="row">
     ${cargada ? `<button class="btn" id="tGuardar">Guardar cambios</button>` : ""}
+    ${cargada ? botonesReporte : ""}
     ${cargada && !n.pagos.some(p => p.reint) ? `<button class="btn danger" id="tAnular" title="Solo si se registró por error: la fecha, la fuente y el monto no se editan">Anular transferencia</button>` : ""}
   </div>
   ${cargada ? `<p class="hint">La fecha, la cuenta de origen, el beneficiario y el monto no se editan: si alguno quedó mal, anula la transferencia y regístrala de nuevo.${!conDocumentos(n) && !conAbonos(n) ? "" : " Si el banco la rechazara, márcala como Rechazada y usa “Volver a pendientes”."}</p>` : ""}
@@ -345,6 +349,16 @@ function renderNomDetail() {
   if (q("nGuardar")) q("nGuardar").onclick = () => { const d = datosCarga(); if (!fechasOk(d)) return; const rep2 = operRepetida(d); if (rep2) { avisoRepetida(rep2); return } accion(q("nGuardar"), async () => { await guardarCarga(n.id, d); toast("Cambios guardados") }) };
   if (q("nPagarRest")) q("nPagarRest").onclick = () => { if (Date.now() < due.getTime() && !confirm("Aún no es la hora del resultado del banco (14:00 del día de pago). ¿Marcar igual los pendientes como pagados?")) return; accion(q("nPagarRest"), async () => { await pagarPendientes(n.id); const sinR = n.pagos.some(p => p.estado === "rechazado" && !p.reint), caja = n.pagos.some(p => p.estado !== "rechazado" && esCobroCaja(n, p) && !p.cobro); toast(`Pagos pendientes marcados como pagados. La nómina N° ${n.num} queda en «${sinR ? "Con rechazos por reintegrar" : caja ? "Por cobrar en banco" : "Pagadas"}».`) }) };
   if (q("nTxt")) q("nTxt").onclick = () => descargar(nombreNomina(n) + ".txt", toTxt(n.lineas));
+  const metaReporte = () => ({ estado: status(n).t, creada: creada(n), generado: fmtISO(todayISO()) + " " + new Date().toTimeString().slice(0, 5), por: nombreDe(st.email),
+    historial: histNom.id === n.id ? histNom.lista.map(h => ({ fecha: fechaHora(h.createdAt), accion: S(h.accion), detalle: S(h.detalle), autor: nombreDe(h.autor) })) : [] });
+  if (q("nRepXlsx")) q("nRepXlsx").onclick = () => {
+    try { descargar(nombreReporteNomina(n) + ".xlsx", libroReporte(reporteNominaHojas(n, metaReporte()))) }
+    catch (e) { toast("No se pudo armar el reporte: " + mensajeError(e)) }
+  };
+  if (q("nRepPdf")) q("nRepPdf").onclick = () => accion(q("nRepPdf"), async () => {
+    try { descargar(nombreReporteNomina(n) + ".pdf", pdfNomina(n, metaReporte(), await cargarPdf())) }
+    catch (e) { toast("No se pudo armar el PDF: " + mensajeError(e)) }
+  });
   if (q("nXlsx")) q("nXlsx").onclick = () => accion(q("nXlsx"), async () => { try { descargar(nombreNomina(n) + ".xlsx", await (esAbonos(n) ? abonosWorkbook : bankWorkbook)(n.lineas)) } catch (e) { toast("No se pudo armar el Excel: " + mensajeError(e)) } });
   if (q("nAnular")) q("nAnular").onclick = () => { if (!confirm(`¿Anular la nómina N° ${n.num}? Sus ${n.pagos.reduce((a, p) => a + p.docs.length, 0)} ${esAbonos(n) ? "abonos" : "documentos"} vuelven a pendientes. Hazlo solo si no se cargó en el banco.`)) return; accion(q("nAnular"), async () => { await anularNomina(n.id); toast(`Nómina anulada; ${esAbonos(n) ? "abonos de vuelta en la pestaña Remuneraciones" : "documentos de vuelta en pendientes"}`) }) };
   if (q("tGuardar")) q("tGuardar").onclick = () => {

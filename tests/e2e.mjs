@@ -307,6 +307,22 @@ try {
   const histN1 = await A.$$eval("#nHist li b", b => b.map(x => x.textContent));
   assert.ok((await A.textContent("#nHist")).includes("fecha de pago " + dmy(lun)));
   log("historial de la nómina 1:", histN1.join(" → "));
+  // Reporte de pago de la nómina abierta (respaldo de lo pagado), en Excel y PDF.
+  {
+    const nRep = await A.$eval("#hDetail", b => b.dataset.id);
+    const xl = await descarga(A, () => A.click("#nRepXlsx"));
+    assert.equal(xl.nombre, "reporte_pago_nomina_" + nRep + ".xlsx");
+    const XLSX = createRequire(import.meta.url)(REPO + "/vendor/xlsx-0.18.5.full.min.js");
+    const wb = XLSX.read(xl.bytes, { type: "buffer" });
+    assert.deepEqual(wb.SheetNames, ["Nómina", "Pagado", "Rechazados", "Historial"]);
+    const hoja = XLSX.utils.sheet_to_json(wb.Sheets["Nómina"], { header: 1, defval: "" });
+    assert.equal(hoja[0][0], "REPORTE DE PAGO · NÓMINA N° " + nRep);
+    assert.ok(XLSX.utils.sheet_to_json(wb.Sheets.Historial, { header: 1, defval: "" }).length >= 6, "el historial va en el reporte");
+    const pdfN = await descarga(A, () => A.click("#nRepPdf"));
+    assert.equal(pdfN.nombre, "reporte_pago_nomina_" + nRep + ".pdf");
+    assert.equal(pdfN.bytes.subarray(0, 5).toString(), "%PDF-");
+    log("reporte de pago de la nómina", nRep + ":", xl.nombre, "(" + wb.SheetNames.join(", ") + ") y", pdfN.nombre, pdfN.bytes.length, "bytes");
+  }
   await A.click('.steps button[data-step="2"]');
   assert.match(await A.textContent("#tbDocs"), /Rechazado en nómina N° 1: cuenta inexistente/);
   log("pago rechazado vuelve a pendientes con su motivo");

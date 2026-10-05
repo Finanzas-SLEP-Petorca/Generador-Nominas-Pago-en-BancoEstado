@@ -391,6 +391,39 @@ ok("abonos: importar la hoja DETALLE del banco y filas pegadas", () => {
       "$60.000", "Resumen por tipo y fuente", "Nóminas del período", "Detalle de lo pagado", "Rechazados", "cuenta cerrada", "4455", "Maria Perez", "Página 1 de " + paginas, "TOTAL PAGADO"])
       assert.ok(texto.includes("(" + t + ")") || texto.includes(t), "falta en el PDF: " + t);
   });
+
+  // Reporte de pago de una nómina: el respaldo de que esa nómina se pagó.
+  const textoPdf = ab => { const bf = Buffer.from(ab), bn = bf.toString("latin1"); let tx = ""; for (const m of bn.matchAll(/stream\r?\n/g)) { const ini = m.index + m[0].length, fin = bn.indexOf("endstream", ini); try { tx += zlib.inflateSync(bf.subarray(ini, fin)).toString("latin1") } catch { } } return { bn, tx: tx.replace(/\\([()\\])/g, "$1") } };
+  const nom = { ...nominas[0], creadaPor: "juan.soto@sleppetorca.gob.cl", obs: "visto bueno jefatura", lineas: [] };
+  const meta = { estado: "Procesada, 1 por reintegrar", creada: "29/09/2026", generado: "30/09/2026 15:00", por: "Wilson Rojas",
+    historial: [{ fecha: "29/09/26 10:00", accion: "generar nómina", detalle: "N° 7 SEP: 61 pagos", autor: "Juan Soto" }, { fecha: "30/09/26 15:00", accion: "resultado de pago", detalle: "rechazado: cuenta cerrada", autor: "Maria Perez" }] };
+  ok("reporte de pago de una nómina: ficha, totales, pagado, rechazados e historial, en Excel y PDF", () => {
+    const ficha = Object.fromEntries(F.fichaNomina(nom, meta));
+    assert.equal(ficha["Nómina N°"], "7"); assert.equal(ficha["N° nómina BancoEstado"], "4455"); assert.equal(ficha["Estado"], meta.estado);
+    assert.equal(ficha["Generada"], "29/09/2026 por Juan Soto"); assert.equal(ficha["Cargada en BancoEstado"], "29/09/2026 por Maria Perez");
+    assert.equal(ficha["Fecha de pago"], "30/09/2026"); assert.equal(ficha["Pagos"], "61, con 61 documentos"); assert.equal(ficha["Total"], "$60.500"); assert.equal(ficha["Observación"], "visto bueno jefatura");
+    const hojas = F.reporteNominaHojas(nom, meta);
+    assert.deepEqual(hojas.map(h => h.nombre), ["Nómina", "Pagado", "Rechazados", "Historial"]);
+    assert.deepEqual(hojas[0].filas[0], ["REPORTE DE PAGO · NÓMINA N° 7"]);
+    assert.deepEqual(hojas[0].filas.find(f => f[0] === "Pagado"), ["Pagado", { $: 60000 }, 60]);
+    assert.equal(hojas[1].filas.length, 1 + 60 + 1); // encabezado, 60 documentos pagados y total
+    assert.equal(hojas[2].filas[1][10], "cuenta cerrada");
+    assert.deepEqual(hojas[3].filas[2], ["30/09/26 15:00", "resultado de pago", "rechazado: cuenta cerrada", "Maria Perez"]);
+    assert.equal(F.nombreReporteNomina(nom), "reporte_pago_nomina_7");
+    const { bn, tx } = textoPdf(P.pdfNomina(nom, meta, { jsPDF, autoTable }));
+    assert.equal(bn.slice(0, 5), "%PDF-");
+    const paginas = (bn.match(/\/Type \/Page\b/g) || []).length;
+    for (const t of ["Reporte de pago · Nómina N° 7", "BancoEstado N° 4455 · SEP · Procesada, 1 por reintegrar", "Generado el 30/09/2026 15:00 por Wilson Rojas", "Datos de la nómina",
+      "Cargada en BancoEstado", "29/09/2026 por Maria Perez", "$60.000", "Detalle de lo pagado", "TOTAL PAGADO", "Rechazados", "cuenta cerrada", "Historial", "resultado de pago", "visto bueno jefatura", "Página 1 de " + paginas])
+      assert.ok(tx.includes("(" + t + ")") || tx.includes(t), "falta en el PDF de la nómina: " + t);
+    // Transferencia: la ficha trae los datos del comprobante.
+    const tf = { num: 12, tipo: "transferencia", origen: "suelto", estado: "cargada", fuente: "JUNJI", fechaPago: "2026-09-30", horaTef: "16:47", operacion: "8800001", idTef: "5550001234", cuentaOrigen: "11100000001", cuentaNombre: "Subvencion Ejemplo", concepto: "AGUA", mensaje: "MEMO 1", preparo: "Persona Uno", autorizo: "Persona Dos", total: 5000,
+      pagos: [{ rut: "111111111", nombre: "SANITARIA", banco: "012", cuenta: "1", monto: 5000, estado: "pagado", motivo: "", reint: "", docs: [{ monto: 5000, concepto: "AGUA", glosa: "MEMO 1" }] }] };
+    const ft = Object.fromEntries(F.fichaNomina(tf, { estado: "Transferencia pagada", creada: "30/09/2026" }));
+    assert.deepEqual([ft["Transferencia N°"], ft["Registro N°"], ft["Fecha y hora"], ft["ID TEF"], ft["Cuenta de origen"], ft["Autorizó"]], ["8800001", "12", "30/09/2026 16:47", "5550001234", "11100000001 (Subvencion Ejemplo)", "Persona Dos"]);
+    assert.equal(F.nombreReporteNomina(tf), "reporte_pago_transferencia_8800001");
+    assert.ok(textoPdf(P.pdfNomina(tf, { estado: "Transferencia pagada", creada: "30/09/2026", generado: "x", historial: [] }, { jsPDF, autoTable })).tx.includes("Datos de la transferencia"));
+  });
 }
 
 // Detalle de Nómina de BancoEstado, vista "Ver Documento" (mismos encabezados

@@ -15,7 +15,7 @@ js/catalogos.js             Bancos, formas de pago, sectores y tipos de document
 js/formato.js               Normalización, validaciones, armado de la nómina y .txt
 js/importar.js              Pegar desde Excel, importar xls/xlsx/csv/txt, planilla del banco
 js/excel.js                 Excel BancoEstado idéntico, plantilla de documentos y Excel del reporte de pagos
-js/pdf.js                   Reporte de pagos en PDF (A4 horizontal)
+js/pdf.js                   Reportes en PDF (A4 horizontal): de pagos por período y de pago de una nómina
 js/comprobante.js           Lectura del comprobante PDF de una transferencia (imagen del PDF y campos)
 js/ocr.js                   OCR del comprobante en el navegador (Tesseract.js)
 js/datos.js                 Firestore: suscripciones, transacciones, historial, migración
@@ -183,6 +183,7 @@ El formato del archivo, las validaciones y los cálculos son los mismos; `tests/
 
   Si dos personas generan a la vez, cada una recibe un número distinto. Con el emulador se comprobó que, en ese choque, Firestore responde "permiso denegado" en vez de reintentar, porque la regla del contador se evalúa con el número ya tomado. Por eso el panel reintenta hasta 5 veces con espera creciente.
 - **Anular, reintegrar, cargar y registrar resultados** también son atómicos. Una nómina anulada queda cerrada.
+- **Reporte de pago de una nómina.** En el detalle de una nómina o transferencia cargada, *Reporte de pago (Excel)* y *Reporte de pago (PDF)* descargan el respaldo de lo pagado en ella, con formato del panel y no del banco: ficha (N° del panel y de BancoEstado, tipo, fuente, concepto, estado, archivo, quién la generó y cargó, fechas, observación; en una transferencia, los datos del comprobante), totales pagado, rechazado y pendiente, detalle de lo pagado por documento o abono, rechazos con su motivo e historial. Usa el mismo cálculo y las mismas tablas del reporte de pagos (`reportePagos` y `reporteTablas` sobre esa sola nómina), así que los dos reportes cuadran.
 - **Resultado desde el reporte de BancoEstado.** En la bitácora, **Cargar reporte del banco** lee el *Detalle de Nómina* que el banco deja descargar en Excel y registra el resultado de cada pago. Reconoce los tres formatos que publica (proveedores, remuneraciones y el detalle por documento, donde varias filas del mismo RUT son un solo pago) por la fila de encabezados, no por la posición de las columnas. Acepta varios archivos a la vez y dirige cada uno a su nómina por el **N° BancoEstado**.
 
   Primero muestra una **vista previa** con lo que quedaría registrado; hasta que la persona la aprueba no se escribe nada. Lo que no calza se deja intacto y se avisa: un archivo de otra nómina, una nómina que no está cargada, un monto distinto al de la nómina, un estado que el panel no conoce, un pago ya reintegrado o uno que el banco no informa. Volver a subir el mismo archivo no reescribe nada.

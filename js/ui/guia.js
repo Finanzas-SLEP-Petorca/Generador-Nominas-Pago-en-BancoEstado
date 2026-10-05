@@ -83,6 +83,7 @@ const SECCIONES = [
       <li>Las <b>cuentas de origen</b> se asocian a su fuente en Configuración: al registrar una transferencia, la fuente se completa sola.</li>
       <li>Puedes descargar otra vez el .txt o el Excel de cualquier nómina, y exportar la bitácora a CSV.</li>
       <li><b>Reporte de pagos:</b> al final de la Bitácora. Elige el período (por fecha de pago de la nómina), el tipo y la fuente. Muestra lo pagado, lo rechazado y lo pendiente de resultado, y lo descarga en <b>Excel</b> o en <b>PDF</b> (listo para imprimir o enviar): resumen por fuente, nóminas del período, detalle de lo pagado por documento o abono, y rechazos.</li>
+      <li><b>Reporte de pago de una nómina:</b> en el detalle de una nómina o transferencia cargada, <b>Reporte de pago (Excel)</b> y <b>Reporte de pago (PDF)</b> descargan el respaldo de lo pagado en esa nómina, con un formato propio del panel (no el del banco): sus datos (N° del panel y de BancoEstado, fuente, estado, archivo, quién la generó y cargó, fecha de pago), los totales pagado, rechazado y pendiente, el detalle de lo pagado por documento o abono, los rechazos con su motivo y el historial.</li>
     </ul>`
   },
   {

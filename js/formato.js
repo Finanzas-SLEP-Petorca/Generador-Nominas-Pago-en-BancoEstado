@@ -392,6 +392,67 @@ export function reporteTablas(rep) {
   };
 }
 
+// =====================================================================
+// Reporte de pago de una nómina (o transferencia): el respaldo de que esa
+// nómina se pagó. Usa el mismo cálculo y las mismas tablas del reporte de
+// pagos, más la ficha de la nómina y su historial.
+// =====================================================================
+
+// Ficha: pares [etiqueta, valor]. meta: { estado (texto), creada (DD/MM/AAAA) }.
+export function fichaNomina(n, { estado = "", creada = "" } = {}) {
+  const tef = tipoDe(n) === "transferencia";
+  const f = [
+    [tef ? "Transferencia N°" : "Nómina N°", tef ? S(n.operacion) : String(n.num)],
+    [tef ? "Registro N°" : "N° nómina BancoEstado", tef ? String(n.num) : S(n.operacion) || "—"],
+    ["Tipo", TIPOS_REGISTRO[tipoDe(n)]],
+    ["Fuente", S(n.fuente)],
+  ];
+  if (S(n.concepto)) f.push(["Concepto", S(n.concepto)]);
+  f.push(["Estado", estado]);
+  if (tef) {
+    f.push(["Fecha y hora", fmtISO(n.fechaPago) + (n.horaTef ? " " + S(n.horaTef) : "")], ["ID TEF", S(n.idTef) || "—"],
+      ["Cuenta de origen", S(n.cuentaOrigen) + (n.cuentaNombre ? " (" + S(n.cuentaNombre) + ")" : "")]);
+    if (S(n.mensaje)) f.push(["Mensaje al beneficiario", S(n.mensaje)]);
+    if (S(n.preparo)) f.push(["Preparó", S(n.preparo)]);
+    if (S(n.autorizo)) f.push(["Autorizó", S(n.autorizo)]);
+    f.push(["Qué paga", n.origen === "documentos" ? "Documentos pendientes" : n.origen === "abonos" ? "Abonos de Remuneraciones" : "Pago sin documento en el panel"]);
+    f.push(["Registrada", creada + (n.creadaPor ? " por " + nombreDe(n.creadaPor) : "")]);
+  } else {
+    f.push(["Archivo", nombreNomina(n) + ".txt"], ["Generada", creada + (n.creadaPor ? " por " + nombreDe(n.creadaPor) : "")],
+      ["Cargada en BancoEstado", n.fechaCarga ? fmtISO(n.fechaCarga) + (n.cargadaPor ? " por " + nombreDe(n.cargadaPor) : "") : "Sin cargar"],
+      ["Fecha de pago", n.fechaPago ? fmtISO(n.fechaPago) : "—"]);
+  }
+  const nDocs = n.pagos.reduce((a, p) => a + (p.docs || []).length, 0);
+  f.push(["Pagos", `${n.pagos.length}${conDocumentos(n) ? `, con ${nDocs} documento${nDocs === 1 ? "" : "s"}` : ""}`], ["Total", money(n.total)]);
+  if (S(n.obs)) f.push(["Observación", S(n.obs)]);
+  return f;
+}
+
+// Nombre del archivo del reporte: reporte_pago_nomina_15 o reporte_pago_transferencia_7044834.
+export const nombreReporteNomina = n => tipoDe(n) === "transferencia" ? "reporte_pago_transferencia_" + (S(n.operacion) || n.num) : "reporte_pago_nomina_" + n.num;
+
+// Hojas del Excel del reporte de pago de una nómina.
+// meta: { estado, creada, historial: [{ fecha, accion, detalle, autor }], generado, por }
+export function reporteNominaHojas(n, meta = {}) {
+  const rep = reportePagos([n]), T = reporteTablas(rep), t = rep.tot;
+  const tabla = x => [x.head, ...x.body, ...(x.foot ? [x.foot] : [])];
+  const titulo = tipoDe(n) === "transferencia" ? `REPORTE DE PAGO · TRANSFERENCIA N° ${S(n.operacion)}` : `REPORTE DE PAGO · NÓMINA N° ${n.num}`;
+  const nomina = [
+    [titulo], ["Generado", (meta.generado || "") + (meta.por ? " por " + meta.por : "")], [],
+    ...fichaNomina(n, meta), [],
+    ["TOTALES", "MONTO", "PAGOS"],
+    ["Pagado", $m(t.pagado), t.nPagado], ["Rechazado", $m(t.rechazado), t.nRechazado], ["Pendiente de resultado", $m(t.pendiente), t.nPendiente],
+    ...(t.porCobrar ? [["Por cobrar en banco", $m(t.porCobrar), t.nPorCobrar]] : []),
+  ];
+  const hist = [["FECHA", "ACCIÓN", "DETALLE", "AUTOR"], ...(meta.historial || []).map(h => [h.fecha, h.accion, h.detalle, h.autor])];
+  return [
+    { nombre: "Nómina", filas: nomina, anchos: [26, 60, 10] },
+    { nombre: "Pagado", filas: tabla(T.pagado), anchos: [11, 10, 14, 15, 12, 13, 34, 26, 14, 18, 22, 11, 14, 16, 14, 20] },
+    { nombre: "Rechazados", filas: tabla(T.rechazados), anchos: [11, 10, 14, 15, 12, 13, 34, 26, 14, 14, 30, 14] },
+    { nombre: "Historial", filas: hist, anchos: [16, 28, 90, 30] },
+  ];
+}
+
 // Hojas del Excel del reporte (filas listas para SheetJS).
 // meta: { desde, hasta, filtros ("Tipo: … · Fuente: …"), generado, por }
 export function reporteHojas(rep, { desde = "", hasta = "", filtros = "", generado = "", por = "" } = {}) {
