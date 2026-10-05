@@ -193,6 +193,8 @@ El formato del archivo, las validaciones y los cálculos son los mismos; `tests/
   - la exportación CSV de la bitácora la incluye.
 - **Feriados:** el resultado del banco (14:00 del día hábil siguiente) salta también las fechas de Configuración.
 - **Monto inválido:** los documentos sin monto válido no se guardan. Se informan al importar.
+- **Detalle de Nómina del banco como fuente de documentos.** *Importar archivo* (paso 1 o 2) reconoce el Excel de BancoEstado en la vista *Ver Documento* por sus encabezados: toma el monto de cada documento (`Monto $`, no `Monto Total $`, que es el total del pago y se repite en cada documento) y traduce `Tipo Documento` del texto del banco al código del SII (`FACTURA ELECTRONICA` → 33, `FACTURA NO AFECTA O EXENTA ELECTRONICA` → 34, `NOTA DE CREDITO ELECTRONICA` → 61). Los tipos también se aceptan en texto al pegar. La fuente se deduce del nombre del archivo o del nombre de la nómina. El archivo no trae N° de cuenta, así que a un proveedor del maestro no se le toca nada y uno nuevo queda para completar.
+- **Sin duplicados al importar.** Un documento que ya está pendiente (mismo RUT, N° y monto) no se vuelve a agregar; si quedó sin un tipo válido y el archivo trae uno, se completa y queda en el historial.
 - **CSV y .txt se leen como texto.** Así no se pierden ceros a la izquierda ni dígitos de cuentas largas.
 - **Solo administradores** pueden cambiar el RUT o eliminar un proveedor.
 - **Descargas directas** del navegador (Blob). "Copiar texto" sigue disponible.

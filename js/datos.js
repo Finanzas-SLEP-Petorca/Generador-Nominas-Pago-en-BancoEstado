@@ -182,6 +182,9 @@ export async function aplicarIngesta(prep, origen, alAvanzar) {
   prep.docs.forEach(d => ops.push(b => b.set(refDoc(nuevoIdDoc()), { ...d, createdAt: serverTimestamp(), createdBy: st.email, ...f() })));
   if (prep.nuevasFuentes.length) ops.push(opConfig({ fuentes: prep.fuentes }));
   if (prep.docs.length) ops.push(b => b.set(refHist(), hist("agregar documentos", "documentos", `${prep.docs.length} documentos (${Object.entries(prep.byF).map(([k, n]) => k + " " + n).join(", ")})${origen ? " desde " + origen : ""}`)));
+  // Pendientes que ya estaban, con el tipo de documento vacío o inválido: se completa.
+  (prep.corregir || []).forEach(c => ops.push(b => b.update(refDoc(c.id), { tipo: c.tipo, ...f() })));
+  if ((prep.corregir || []).length) ops.push(b => b.set(refHist(), hist("corregir tipo de documento", "documentos", `${prep.corregir.length} documento${prep.corregir.length > 1 ? "s" : ""} pendiente${prep.corregir.length > 1 ? "s" : ""} sin tipo válido${origen ? ", desde " + origen : ""}: ${prep.corregir.slice(0, 20).map(c => `${c.ndoc} → ${c.tipo}`).join(", ")}${prep.corregir.length > 20 ? "…" : ""}`, { tipos: prep.corregir.map(c => c.antes || "vacío").join(", ") }, { tipos: prep.corregir.map(c => c.tipo).join(", ") })));
   await enLotes(ops, alAvanzar);
 }
 

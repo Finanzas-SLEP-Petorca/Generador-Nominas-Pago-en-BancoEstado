@@ -3,6 +3,39 @@
 // Misma lógica que el panel de referencia, más la columna DC opcional.
 
 import { S, normRut, rutOk, parseFecha, cleanName, normFuente, pad, normCuenta, parseMonto, normDc, conceptoDeNombre } from "./formato.js";
+import { TIPOS, M_TIPO } from "./catalogos.js";
+import { codigoBanco } from "./comprobante.js";
+
+// Tipo de documento: el código del SII ("33", "33 Factura…") o el nombre que
+// escribe BancoEstado en su Detalle de Nómina ("FACTURA ELECTRONICA",
+// "FACTURA NO AFECTA O EXENTA ELECTRONICA", "NOTA DE CREDITO ELECTRONICA").
+const llaveTipo = v => cleanName(v).replace(/\b(DE|NO AFECTA O)\b/g, " ").replace(/\s+/g, " ").trim();
+const TIPO_POR_NOMBRE = Object.fromEntries(TIPOS.map(([c, n]) => [llaveTipo(n), c]));
+export function tipoDoc(v) {
+  if (typeof v === "number") return pad(v, 2);
+  const s = S(v); if (!s) return "";
+  const cod = s.match(/^(\d{1,3})\b/);
+  if (cod) return pad(cod[1], 2);
+  return TIPO_POR_NOMBRE[llaveTipo(s)] || pad(s, 2);
+}
+
+// Detalle de Nómina de BancoEstado en la vista "Ver Documento": una cabecera
+// con los datos de la nómina y una fila por documento, con "Tipo Documento"
+// en texto y dos montos: "Monto Total $" (lo abonado al proveedor, que se
+// repite en cada documento del mismo pago) y "Monto $" (el del documento).
+// Las columnas se reconocen por su encabezado exacto, no por su posición.
+const llave = v => S(v).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[º°]/g, "").replace(/\s+/g, " ").trim();
+export function detalleBancoPorDocumento(rows) {
+  for (let i = 0; i < Math.min(rows.length, 30); i++) {
+    const h = (rows[i] || []).map(llave), col = re => h.findIndex(x => re.test(x));
+    const m = { rut: col(/^rut$/), nombre: col(/^nombre$/), banco: col(/^banco$/), forma: col(/^(forma|tipo) abono$/), ndoc: col(/^n documento$/), tipo: col(/^tipo documento$/), fecha: col(/^fecha emision$/), monto: col(/^monto \$$/) };
+    if (m.rut < 0 || m.ndoc < 0 || m.tipo < 0 || m.monto < 0) continue;
+    let nombreNomina = "";
+    for (const r of rows.slice(0, i)) for (const c of [0, 2]) if (llave(r && r[c]) === "nombre nomina") nombreNomina = S(r[c + 1]);
+    return { inicio: i + 1, m, nombreNomina };
+  }
+  return null;
+}
 
 const RX = {
   fuente: /fuente|financiamiento|subvenci|programa|centro de costo/, rut: /^rut|rut (del )?(proveedor|beneficiario)/, nombre: /raz|nombre|beneficiario|proveedor/, email: /mail|correo/,
@@ -28,6 +61,18 @@ export function ingest(rows, hint) {
   rows = rows.filter(r => r && r.some(c => S(c) !== ""));
   const provs = [], newDocs = [];
   if (!rows.length) return { provs, newDocs };
+  const det = detalleBancoPorDocumento(rows);
+  if (det) {
+    // Sin N° de cuenta: el proveedor solo se agrega si no está en el maestro
+    // (para completarlo en el paso 1); a uno que ya existe no se le toca nada.
+    const g = (r, k) => det.m[k] >= 0 ? r[det.m[k]] : "", vistos = new Set();
+    rows.slice(det.inicio).forEach(r => {
+      const rut = normRut(g(r, "rut")); if (!rutOk(rut)) return;
+      if (!vistos.has(rut)) { vistos.add(rut); provs.push({ rut, nombre: g(r, "nombre"), banco: codigoBanco(g(r, "banco")), forma: /ahorro/i.test(S(g(r, "forma"))) ? "02" : "01", soloNuevo: true }) }
+      newDocs.push({ rut, fecha: g(r, "fecha"), monto: g(r, "monto"), ndoc: g(r, "ndoc"), tipo: g(r, "tipo"), fuente: hint || "" });
+    });
+    return { provs, newDocs, nombreNomina: det.nombreNomina };
+  }
   if (isBankSheet(rows)) {
     let cur = null;
     rows.forEach(r => {
@@ -64,10 +109,11 @@ export function ingest(rows, hint) {
 // Normaliza lo ingerido contra el maestro actual, sin escribir nada.
 // Devuelve lo que hay que guardar y los documentos rechazados: Firestore
 // exige monto entero mayor que cero, así que esos no se pueden guardar.
-export function prepararIngesta({ provs, newDocs }, { maestro, fuentes, defFuente }) {
+export function prepararIngesta({ provs, newDocs }, { maestro, fuentes, defFuente, pendientes = [] }) {
   const cambios = new Map(); // rut → { antes, despues }
   provs.forEach(p => {
     const rut = normRut(p.rut); if (!rut) return;
+    if (p.soloNuevo && (maestro[rut] || cambios.has(rut))) return;
     const rec = { rut, nombre: cleanName(p.nombre), email: S(p.email), banco: pad(p.banco, 3), forma: pad(p.forma, 2) || "01", cuenta: normCuenta(p.cuenta), sector: pad(p.sector, 2) };
     const prev = cambios.has(rut) ? cambios.get(rut).despues : maestro[rut];
     let despues;
@@ -77,18 +123,34 @@ export function prepararIngesta({ provs, newDocs }, { maestro, fuentes, defFuent
   });
   let nNew = 0, nUpd = 0;
   for (const c of cambios.values()) c.antes ? nUpd++ : nNew++;
-  const docs = [], rechazados = [], nuevasFuentes = [], byF = {};
+  const sinCuenta = [...cambios.values()].filter(c => !c.antes && !c.despues.cuenta).length;
+  const docs = [], rechazados = [], nuevasFuentes = [], byF = {}, corregir = [];
+  let repetidos = 0;
   const todas = [...fuentes];
+  // Un documento que ya está pendiente (mismo RUT, N° y monto) no se vuelve a
+  // agregar; si quedó sin un tipo válido y ahora viene con uno, se corrige.
+  const clave = d => `${d.rut}|${d.ndoc}|${d.monto}`;
+  const yaPendientes = new Map();
+  pendientes.forEach(d => { const k = clave(d); if (!yaPendientes.has(k)) yaPendientes.set(k, []); yaPendientes.get(k).push(d) });
   newDocs.forEach(d => {
     const f = normFuente(d.fuente) || defFuente;
-    const doc = { rut: normRut(d.rut), fecha: parseFecha(d.fecha), monto: parseMonto(d.monto), ndoc: S(typeof d.ndoc === "number" ? Math.round(d.ndoc) : d.ndoc), tipo: pad(d.tipo, 2), fuente: f, sel: true };
+    const doc = { rut: normRut(d.rut), fecha: parseFecha(d.fecha), monto: parseMonto(d.monto), ndoc: S(typeof d.ndoc === "number" ? Math.round(d.ndoc) : d.ndoc), tipo: tipoDoc(d.tipo), fuente: f, sel: true };
     const dc = normDc(d.dc); if (dc) doc.dc = dc;
     if (!(Number.isInteger(doc.monto) && doc.monto > 0)) { rechazados.push({ ...doc, montoOriginal: S(d.monto) }); return }
+    const previos = yaPendientes.get(clave(doc)) || [];
+    const igual = previos.find(p => p.tipo === doc.tipo), aCorregir = !igual && M_TIPO[doc.tipo] && previos.find(p => !M_TIPO[p.tipo]);
+    if (igual || aCorregir) {
+      if (aCorregir) { corregir.push({ id: aCorregir.id, rut: doc.rut, ndoc: doc.ndoc, monto: doc.monto, antes: S(aCorregir.tipo), tipo: doc.tipo }); previos.splice(previos.indexOf(aCorregir), 1, { ...aCorregir, tipo: doc.tipo }) }
+      else repetidos++;
+      return;
+    }
+    yaPendientes.set(clave(doc), [...previos, doc]); // también evita repetirlo dentro del mismo archivo
     if (f && !todas.includes(f)) { todas.push(f); nuevasFuentes.push(f) }
     byF[f] = (byF[f] || 0) + 1;
     docs.push(doc);
   });
-  return { provs: [...cambios.values()], nNew, nUpd, docs, rechazados, nuevasFuentes, fuentes: todas, byF };
+  const sinTipo = docs.filter(d => !M_TIPO[d.tipo]).length;
+  return { provs: [...cambios.values()], nNew, nUpd, sinCuenta, docs, rechazados, nuevasFuentes, fuentes: todas, byF, corregir, repetidos, sinTipo };
 }
 
 export function parsePaste(text) { return text.replace(/\r/g, "").split("\n").map(l => l.split(/\t|;/)) }
@@ -138,7 +200,11 @@ export async function readFile(file, fuentes) {
     wb.SheetNames.filter(n => !/instruc|lista|fuente|ayuda/i.test(n)).forEach(n => { const r = ingest(XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: "" }), hint); all.provs.push(...r.provs); all.newDocs.push(...r.newDocs) });
     return all;
   }
-  return ingest(rows, hint);
+  const r = ingest(rows, hint);
+  // Detalle del banco: la fuente también puede venir en el nombre de la nómina (ej. PAGO_PROVEEDORES_FAEP).
+  const f = !hint && r.nombreNomina ? fuenteFromName(r.nombreNomina, fuentes) : "";
+  if (f) r.newDocs.forEach(d => { d.fuente = f });
+  return r;
 }
 
 // =====================================================================

@@ -37,13 +37,19 @@ export function fechaHora(t) { const d = aFecha(t); return d ? d.toLocaleString(
 
 // Ingiere filas pegadas o importadas y las guarda en Firestore.
 export async function ingestar(r, origen) {
-  const prep = prepararIngesta(r, { maestro: st.maestro, fuentes: st.config.fuentes, defFuente: prefs.defFuente });
-  if (!prep.provs.length && !prep.docs.length && !prep.rechazados.length) { toast("No se reconocieron filas. Revisa el orden de las columnas."); return false }
+  const prep = prepararIngesta(r, { maestro: st.maestro, fuentes: st.config.fuentes, defFuente: prefs.defFuente, pendientes: st.docs });
+  if (!prep.provs.length && !prep.docs.length && !prep.rechazados.length && !prep.corregir.length && !prep.repetidos) { toast("No se reconocieron filas. Revisa el orden de las columnas."); return false }
   await aplicarIngesta(prep, origen); // los proveedores sin cambios no se escriben
   const parts = []; if (prep.nNew) parts.push(prep.nNew + " proveedores nuevos"); if (prep.nUpd) parts.push(prep.nUpd + " actualizados");
   if (prep.docs.length) parts.push(prep.docs.length + " documentos (" + Object.entries(prep.byF).map(([f, n]) => f + " " + n).join(", ") + ")");
   if (prep.nuevasFuentes.length) parts.push("fuente nueva: " + prep.nuevasFuentes.join(", "));
   let msg = parts.length ? "Agregado: " + parts.join("; ") : "";
+  const mas = [];
+  if (prep.corregir.length) mas.push(`${prep.corregir.length} pendiente${prep.corregir.length > 1 ? "s" : ""} con el tipo de documento corregido`);
+  if (prep.repetidos) mas.push(`${prep.repetidos} ya estaba${prep.repetidos > 1 ? "n" : ""} pendiente${prep.repetidos > 1 ? "s" : ""} y no se duplic${prep.repetidos > 1 ? "aron" : "ó"}`);
+  if (prep.sinTipo) mas.push(`${prep.sinTipo} sin tipo de documento reconocido: corrígelo con Editar`);
+  if (prep.sinCuenta) mas.push(`${prep.sinCuenta} proveedor${prep.sinCuenta > 1 ? "es" : ""} nuevo${prep.sinCuenta > 1 ? "s" : ""} sin N° de cuenta: complétalo en Proveedores`);
+  if (mas.length) msg += (msg ? ". " : "") + mas.join(". ");
   if (prep.rechazados.length) msg += (msg ? ". " : "") + `${prep.rechazados.length} documento${prep.rechazados.length > 1 ? "s" : ""} sin monto válido no se agregó (N° ${prep.rechazados.slice(0, 5).map(d => d.ndoc || "s/n").join(", ")}${prep.rechazados.length > 5 ? "…" : ""})`;
   toast(msg || "No hubo cambios");
   return true;

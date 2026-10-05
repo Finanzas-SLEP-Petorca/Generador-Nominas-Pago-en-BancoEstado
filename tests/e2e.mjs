@@ -657,6 +657,40 @@ try {
     log("transferencias desde PDF:", tef2 ? "2 registradas (una sin documento, otra paga " + docsPdf.filter(d => d.rut === rutPdf).length + " documentos que calzan con el monto)" : "1 registrada", "y el PDF repetido se informa");
   }
 
+  // ---------- Detalle de Nómina del banco por documento (Excel), en el paso 2 ----------
+  {
+    const XLSX = createRequire(import.meta.url)(REPO + "/vendor/xlsx-0.18.5.full.min.js");
+    const fmt = r => r.slice(0, -1).replace(/\B(?=(\d{3})+(?!\d))/g, ".") + "-" + r.slice(-1);
+    const fila = (ndoc, tipo, monto) => [fmt(R[0]), "COMERCIAL UNO LIMITADA  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCO DEL ESTADO DE CHILE", "$ 1.500", "Aceptado en validación", "", ndoc, tipo, "31/08/2026", monto];
+    const ws = XLSX.utils.aoa_to_sheet([["Mis Nóminas - Ver Nómina - Ver Documento"], [], ["Fecha : Oct 5, 2026, 11:44:28 AM"], [], ["Detalle Nómina"],
+      ["Convenio", "SLEP EJEMPLO PROVEEDORES(PROV-000)", "Nº Nómina", 900100], ["Nombre Nómina", "P02_EJEMPLO_FAEP", "Monto Total $", "$1.500"],
+      ["Cantidad Pagos", "1", "Fecha Pago", "05/10/2026"], ["Concepto Pago", "Proveedores", "Estado Nómina Pagos", "Provisión Autorizada"], [],
+      ["Rut", "Nombre", "Centro Negocio", "Tipo Abono", "Banco", "Monto Total $", "Estado", "Motivo", "N° Documento", "Tipo Documento", "Fecha Emisión", "Monto $"],
+      fila(8001, "FACTURA ELECTRONICA", "$ 1.000"), fila(8002, "FACTURA NO AFECTA O EXENTA ELECTRONICA", "$ 500")]);
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "DetalleNomina");
+    const archivo = { name: "Detalle_Nomina_N__900100_-_prueba.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from(XLSX.write(wb, { type: "array", bookType: "xlsx" })) };
+    const docsBanco = () => A.evaluate(async () => {
+      const fs = await import("https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js");
+      const q = await fs.getDocs(fs.collection(fs.getFirestore(), "pago_documentos"));
+      return q.docs.map(d => ({ id: d.id, ...d.data() })).filter(d => ["8001", "8002"].includes(d.ndoc)).map(d => ({ id: d.id, ndoc: d.ndoc, tipo: d.tipo, monto: d.monto, fuente: d.fuente })).sort((x, y) => x.ndoc.localeCompare(y.ndoc));
+    });
+    await A.click('.steps button[data-step="2"]');
+    await A.setInputFiles("#fileDocs", archivo);
+    await esperar(A, () => /Agregado: 2 documentos \(FAEP 2\)/.test(document.getElementById("toast").textContent));
+    let enFs = await docsBanco();
+    assert.deepEqual(enFs.map(d => [d.ndoc, d.tipo, d.monto, d.fuente]), [["8001", "33", 1000, "FAEP"], ["8002", "34", 500, "FAEP"]]);
+    // Uno quedó sin tipo (como al importarlo antes de esta corrección): al subirlo de nuevo se completa y nada se duplica.
+    await A.evaluate(async id => {
+      const fs = await import("https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js");
+      await fs.updateDoc(fs.doc(fs.getFirestore(), "pago_documentos", id), { tipo: "", updatedBy: "admin1@example.com", updatedAt: fs.serverTimestamp() });
+    }, enFs[0].id);
+    await A.setInputFiles("#fileDocs", archivo);
+    await esperar(A, () => /1 pendiente con el tipo de documento corregido\. 1 ya estaba pendiente y no se duplicó/.test(document.getElementById("toast").textContent));
+    enFs = await docsBanco();
+    assert.deepEqual(enFs.map(d => [d.ndoc, d.tipo]), [["8001", "33"], ["8002", "34"]]);
+    log("Detalle de Nómina del banco por documento: tipo en texto → código, monto de cada documento, fuente desde el nombre de la nómina, sin duplicar y corrige el tipo vacío");
+  }
+
   // ---------- feriados ----------
   await A.click("#btnConfig");
   await A.fill("#cFeriado", "18/09/2026, 2026-09-19"); await A.click("#btnAddFeriado");

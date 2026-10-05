@@ -393,6 +393,46 @@ ok("abonos: importar la hoja DETALLE del banco y filas pegadas", () => {
   });
 }
 
+// Detalle de Nómina de BancoEstado, vista "Ver Documento" (mismos encabezados
+// que el archivo real, con RUT, nombres, N° y montos inventados).
+ok("Detalle de Nómina del banco por documento: tipo en texto, monto de cada documento, sin duplicar", () => {
+  const R1 = "11.111.111-1", R2 = "22.222.222-2";
+  const filas = [
+    ["Mis Nóminas - Ver Nómina - Ver Documento"], [], ["Fecha : Oct 5, 2026, 11:44:28 AM"], [], ["Detalle Nómina"],
+    ["Convenio", "SLEP EJEMPLO PROVEEDORES(PROV-000)\t", "Nº Nómina", 900100],
+    ["Nombre Nómina", "P02_EJEMPLO_FAEP", "Monto Total $", "$350.000"],
+    ["Cantidad Pagos", "2", "Fecha Pago", "05/10/2026"],
+    ["Concepto Pago", "Proveedores", "Estado Nómina Pagos", "Provisión Autorizada"], [],
+    ["Rut", "Nombre", "Centro Negocio", "Tipo Abono", "Banco", "Monto Total $", "Estado", "Motivo", "N° Documento", "Tipo Documento", "Fecha Emisión", "Monto $"],
+    // Un pago con dos documentos y una nota de crédito: "Monto Total $" se repite.
+    [R1, "COMERCIAL UNO S.A  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCO SANTANDER-CHILE", "$ 250.000", "Aceptado en validación", "", 101, "FACTURA ELECTRONICA", "31/08/2026", "$ 200.000"],
+    [R1, "COMERCIAL UNO S.A  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCO SANTANDER-CHILE", "$ 250.000", "Aceptado en validación", "", 102, "FACTURA NO AFECTA O EXENTA ELECTRONICA", "31/08/2026", "$ 60.000"],
+    [R1, "COMERCIAL UNO S.A  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCO SANTANDER-CHILE", "$ 250.000", "Aceptado en validación", "", 7, "NOTA DE CREDITO ELECTRONICA", "01/09/2026", "$ 10.000"],
+    [R2, "SERVICIOS DOS SPA", "", "Abono en Cuenta de Ahorro", "BANCO DEL ESTADO DE CHILE", "$ 100.000", "Aceptado en validación", "", 55, "BOLETA DE HONORARIOS ELECTRONICA", "02/09/2026", "$ 100.000"]
+  ];
+  const r = I.ingest(filas, "");
+  assert.equal(r.nombreNomina, "P02_EJEMPLO_FAEP");
+  assert.deepEqual(r.newDocs.map(d => [d.ndoc, d.monto]), [[101, "$ 200.000"], [102, "$ 60.000"], [7, "$ 10.000"], [55, "$ 100.000"]]); // el del documento, no el total del pago
+  assert.equal(r.provs.length, 2);
+  assert.deepEqual([r.provs[0].banco, r.provs[0].forma, r.provs[1].banco, r.provs[1].forma], ["037", "01", "012", "02"]);
+  const fuentes = ["GENERAL", "FAEP"];
+  // Proveedor que ya está en el maestro: el archivo no trae cuenta, así que no se toca.
+  const maestro = { "111111111": { rut: "111111111", nombre: "COMERCIAL UNO SA", banco: "001", forma: "01", cuenta: "123456", sector: "64" } };
+  const p = I.prepararIngesta(r, { maestro, fuentes, defFuente: "FAEP" });
+  assert.deepEqual(p.docs.map(d => d.tipo), ["33", "34", "61", ""]); // la boleta de honorarios no está en la tabla del SII del panel
+  assert.equal(p.sinTipo, 1);
+  assert.deepEqual(p.provs.map(c => c.despues.rut), ["222222222"]);
+  assert.equal(p.sinCuenta, 1);
+  // Subirlo otra vez no duplica; a los pendientes sin tipo válido se les completa.
+  const pend = p.docs.map((d, i) => ({ ...d, id: "d" + i, tipo: i === 0 ? "" : d.tipo }));
+  const p2 = I.prepararIngesta(r, { maestro, fuentes, defFuente: "FAEP", pendientes: pend });
+  assert.equal(p2.docs.length, 0);
+  assert.deepEqual(p2.corregir.map(c => [c.id, c.antes, c.tipo]), [["d0", "", "33"]]);
+  assert.equal(p2.repetidos, 3);
+  // Los tipos del SII también se leen en texto al pegar o desde otras planillas.
+  assert.deepEqual(["33", "33 Factura electrónica", 61, "Nota de débito electrónica", "Factura exenta electrónica", "Abono en Cuenta Corriente"].map(I.tipoDoc), ["33", "33", "61", "56", "34", ""]);
+});
+
 ok("index.html con las versiones de los archivos al día", () => {
   const { execFileSync } = require("node:child_process");
   execFileSync(process.execPath, [path.join(raiz, "tests/versionar.mjs"), "--revisar"], { stdio: "pipe" });
