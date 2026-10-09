@@ -323,6 +323,32 @@ try {
     assert.equal(pdfN.bytes.subarray(0, 5).toString(), "%PDF-");
     log("reporte de pago de la nómina", nRep + ":", xl.nombre, "(" + wb.SheetNames.join(", ") + ") y", pdfN.nombre, pdfN.bytes.length, "bytes");
   }
+  // Pagos a un proveedor: desde su ficha, "Ver pagos" deja el reporte de la bitácora solo con sus pagos, de todas las fechas.
+  {
+    await A.click('.steps button[data-step="1"]');
+    await A.click(`#tbProv tr[data-rut="${R[0]}"]`);
+    await esperar(A, () => !document.getElementById("btnPagosProv").hidden);
+    await A.click("#btnPagosProv");
+    await esperar(A, () => !document.getElementById("rPagos").hidden && document.querySelectorAll("#rPagos tr[data-nom]").length > 0);
+    assert.equal(await A.inputValue("#rBenef"), R[0].slice(0, -1).replace(/\B(?=(\d{3})+(?!\d))/g, ".") + "-" + R[0].slice(-1));
+    assert.match(await A.textContent("#rPagos h3"), /COMERCIAL UNO LIMITADA/);
+    const filasProv = await A.$$eval("#rPagos tr[data-nom] td:nth-child(7)", t => t.map(x => x.textContent));
+    const xlProv = await descarga(A, () => A.click("#btnReporte"));
+    assert.equal(xlProv.nombre, "reporte_pagos_" + R[0] + "_todo.xlsx");
+    const XLSX = createRequire(import.meta.url)(REPO + "/vendor/xlsx-0.18.5.full.min.js");
+    const pag = XLSX.utils.sheet_to_json(XLSX.read(xlProv.bytes, { type: "buffer" }).Sheets.Pagado, { header: 1, defval: "" });
+    assert.deepEqual([...new Set(pag.slice(1, -1).map(f => f[6]))], ["COMERCIAL UNO LIMITADA"]);
+    await A.screenshot({ path: AQUI + "pagos-proveedor.png", fullPage: false });
+    // Al tocar un pago se abre su nómina.
+    await A.click("#rPagos tr[data-nom]");
+    await esperar(A, () => !document.getElementById("hDetail").hidden);
+    // Por nombre también.
+    await A.fill("#rBenef", "servicios dos");
+    await esperar(A, () => /SERVICIOS DOS SPA/.test(document.querySelector("#rPagos h3")?.textContent || ""));
+    log("pagos a un proveedor:", filasProv.length, "pago(s) de COMERCIAL UNO LIMITADA (" + filasProv.join(", ") + "), Excel", xlProv.nombre, "; búsqueda por nombre");
+    await A.fill("#rBenef", ""); await A.click('[data-rper="mes"]');
+    await esperar(A, () => document.getElementById("rPagos").hidden);
+  }
   await A.click('.steps button[data-step="2"]');
   assert.match(await A.textContent("#tbDocs"), /Rechazado en nómina N° 1: cuenta inexistente/);
   log("pago rechazado vuelve a pendientes con su motivo");

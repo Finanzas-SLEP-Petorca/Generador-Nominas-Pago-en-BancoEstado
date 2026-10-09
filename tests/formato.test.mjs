@@ -368,6 +368,24 @@ ok("abonos: importar la hoja DETALLE del banco y filas pegadas", () => {
   });
 }
 
+// Pagos a un proveedor o beneficiario: el reporte queda solo con sus pagos.
+ok("reporte de pagos filtrado por proveedor o beneficiario (RUT o nombre)", () => {
+  const pg = (rut, nombre, monto, estado = "pagado") => ({ rut, nombre, banco: "012", cuenta: "1", monto, estado, motivo: estado === "rechazado" ? "cuenta cerrada" : "", reint: "", docs: [{ ndoc: String(monto), tipo: "33", fecha: "01092026", monto }] });
+  const noms = [
+    { num: 1, estado: "cargada", fuente: "SEP", fechaPago: "2026-09-10", operacion: "11", total: 600, pagos: [pg("111111111", "COMERCIAL UNO LIMITADA", 100), pg("222222222", "SERVICIOS DOS SPA", 500)] },
+    { num: 2, estado: "cargada", fuente: "PIE", fechaPago: "2026-09-20", operacion: "12", total: 300, pagos: [pg("111111111", "COMERCIAL UNO LIMITADA", 200, "rechazado"), pg("333333333", "TRES LTDA", 100)] },
+    { num: 3, estado: "anulada", fuente: "SEP", fechaPago: "2026-09-21", total: 50, pagos: [pg("111111111", "COMERCIAL UNO LIMITADA", 50)] },
+  ];
+  const r = F.reportePagos(noms, { beneficiario: "11.111.111-1" });
+  assert.deepEqual(r.nominas.map(n => [n.num, n.total, n.pagos.length]), [[1, 100, 1], [2, 200, 1]]); // la anulada no cuenta
+  assert.deepEqual([r.tot.pagado, r.tot.rechazado, r.tot.nominas], [100, 200, 2]);
+  assert.deepEqual(F.reporteTablas(r).pagado.body.map(f => f[6]), ["COMERCIAL UNO LIMITADA"]);
+  assert.deepEqual(F.reportePagos(noms, { beneficiario: "comercial uno" }).tot.pagado, 100);
+  assert.deepEqual(F.reportePagos(noms, { beneficiario: "spa" }).nominas.map(n => n.num), [1]);
+  assert.equal(F.reportePagos(noms, { beneficiario: "99.999.999-9" }).nominas.length, 0);
+  assert.equal(F.reportePagos(noms, {}).tot.pagado, 700); // sin filtro, como antes
+});
+
 // Reporte en PDF: mismo contenido que el Excel (se revisa el texto de las páginas).
 {
   const { jsPDF } = require(path.join(raiz, "vendor/jspdf-4.2.1.umd.min.js"));

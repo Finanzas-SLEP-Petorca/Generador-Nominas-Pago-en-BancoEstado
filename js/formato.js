@@ -325,11 +325,24 @@ export function conceptoDeNombre(nombre) {
 
 export const fechaReporte = n => n.fechaPago || n.fechaCarga || "";
 
-export function reportePagos(nominas, { desde = "", hasta = "", fuente = "*", tipo = "*" } = {}) {
+// ¿El pago es a este beneficiario? Por RUT (con o sin puntos y guion) o por parte del nombre.
+export function esBeneficiario(p, q) {
+  const t = S(q); if (!t) return true;
+  const rut = normRut(t);
+  if (/^\d{7,9}[0-9K]$/.test(rut) && rutOk(rut)) return normRut(p.rut) === rut;
+  const nom = cleanName(t);
+  return !!nom && (cleanName(p.nombre).includes(nom) || (/^\d{4,}$/.test(nom) && normRut(p.rut).startsWith(nom)));
+}
+
+// beneficiario: RUT o parte del nombre; deja en cada nómina solo los pagos a ese
+// beneficiario (y su total), para ver lo pagado a un proveedor o persona.
+export function reportePagos(nominas, { desde = "", hasta = "", fuente = "*", tipo = "*", beneficiario = "" } = {}) {
   const sel = nominas.filter(n => n.estado === "cargada"
     && (fuente === "*" || n.fuente === fuente)
     && (tipo === "*" || tipo === tipoDe(n))
     && (!desde || fechaReporte(n) >= desde) && (!hasta || fechaReporte(n) <= hasta))
+    .map(n => { if (!S(beneficiario)) return n; const pagos = n.pagos.filter(p => esBeneficiario(p, beneficiario)); return pagos.length ? { ...n, pagos, total: pagos.reduce((a, p) => a + p.monto, 0) } : null })
+    .filter(Boolean)
     .sort((a, b) => fechaReporte(a).localeCompare(fechaReporte(b)) || a.num - b.num);
   const cero = () => ({ nominas: 0, pagado: 0, nPagado: 0, rechazado: 0, nRechazado: 0, pendiente: 0, nPendiente: 0, porCobrar: 0, nPorCobrar: 0 });
   const tot = cero(), grupos = {}, pagados = [], rechazados = [];

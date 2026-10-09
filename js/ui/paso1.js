@@ -6,6 +6,7 @@ import { ingest, parsePaste, readFile, prepararIngesta } from "../importar.js";
 import { plantillaSimple } from "../excel.js";
 import { st, guardarProveedor, eliminarProveedor, aplicarIngesta, suscribirHistorial, aFecha } from "../datos.js";
 import { $, esc, fillSelect, toast, accion, descargar, prefs, go, mensajeError } from "./comun.js";
+import { verPagosDe } from "./paso4.js";
 
 let editing = null, bajaHist = null;
 
@@ -19,6 +20,7 @@ export function provForm(p) {
   $("fRut").disabled = !!p && !st.admin;
   $("fRut").title = p && !st.admin ? "Solo un administrador puede cambiar el RUT" : "";
   $("btnDelProv").hidden = !p || !st.admin;
+  $("btnPagosProv").hidden = !p;
   mostrarHistorial(p ? p.rut : null);
 }
 
@@ -65,6 +67,7 @@ export function init() {
   fillSelect($("fBanco"), BANCOS); fillSelect($("fForma"), FORMAS); fillSelect($("fSector"), SECTORES);
   $("fSector").value = "64";
   $("btnClearProv").onclick = () => provForm(null);
+  $("btnPagosProv").onclick = () => { if (editing) verPagosDe(editing) };
   $("btnCtaRut").onclick = () => { const r = normRut($("fRut").value); if (!r) { toast("Escribe primero el RUT"); return } $("fCuenta").value = r.slice(0, -1); $("fBanco").value = "012"; $("fForma").value = "01" };
   $("btnSaveProv").onclick = () => accion($("btnSaveProv"), async () => {
     const raw = { rut: $("fRut").value, nombre: $("fNombre").value, email: $("fEmail").value, banco: $("fBanco").value, forma: $("fForma").value, cuenta: $("fCuenta").value, sector: $("fSector").value };

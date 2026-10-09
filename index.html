@@ -23,18 +23,18 @@
   "./js/excel.js": "./js/excel.js?v=3978c92e6c",
   "./js/firebase-config.js": "./js/firebase-config.js?v=ffcd41549c",
   "./js/firebase.js": "./js/firebase.js?v=6eba6d64a6",
-  "./js/formato.js": "./js/formato.js?v=95747526c9",
+  "./js/formato.js": "./js/formato.js?v=ebd63c6619",
   "./js/importar.js": "./js/importar.js?v=196952b24b",
   "./js/ocr.js": "./js/ocr.js?v=c001276870",
   "./js/pdf.js": "./js/pdf.js?v=83745e4419",
   "./js/ui/abonos.js": "./js/ui/abonos.js?v=d1f0c1253f",
   "./js/ui/comun.js": "./js/ui/comun.js?v=9572eb0c1b",
   "./js/ui/config.js": "./js/ui/config.js?v=3083003dbd",
-  "./js/ui/guia.js": "./js/ui/guia.js?v=fb29c59d02",
-  "./js/ui/paso1.js": "./js/ui/paso1.js?v=992864357e",
+  "./js/ui/guia.js": "./js/ui/guia.js?v=2164ef0a15",
+  "./js/ui/paso1.js": "./js/ui/paso1.js?v=b843781bef",
   "./js/ui/paso2.js": "./js/ui/paso2.js?v=fa97690d6b",
   "./js/ui/paso3.js": "./js/ui/paso3.js?v=aff19918ec",
-  "./js/ui/paso4.js": "./js/ui/paso4.js?v=56ba7e2aec",
+  "./js/ui/paso4.js": "./js/ui/paso4.js?v=f615d9d8e0",
   "./js/ui/tema.js": "./js/ui/tema.js?v=e5740e8ffa",
   "./js/ui/transferencia.js": "./js/ui/transferencia.js?v=f515b4c844"
  }
@@ -116,6 +116,7 @@
       <button class="btn primary" id="btnSaveProv">Guardar proveedor</button>
       <button class="btn" id="btnCtaRut" title="BancoEstado, cuenta = RUT sin dígito verificador">Usar Cuenta RUT</button>
       <button class="btn" id="btnClearProv">Limpiar</button>
+      <button class="btn" id="btnPagosProv" hidden title="Todos los pagos a este proveedor, en el reporte de pagos de la Bitácora">Ver pagos a este proveedor</button>
       <button class="btn danger" id="btnDelProv" hidden>Eliminar proveedor</button>
     </div>
     <div id="provHist" hidden></div>
@@ -407,6 +408,8 @@
       <label class="toggle" style="color:var(--muted)">Hasta <input type="date" id="rHasta"></label>
       <label class="toggle" style="color:var(--muted)">Tipo <select id="rTipo"><option value="*">Todas</option><option value="proveedores">Proveedores</option><option value="abonos">Remuneraciones</option><option value="transferencia">Transferencias</option></select></label>
       <label class="toggle" style="color:var(--muted)">Fuente <select id="rFuente"></select></label>
+      <label class="toggle" style="color:var(--muted)" title="RUT o parte del nombre: el reporte queda solo con los pagos a ese proveedor o persona">Proveedor o beneficiario <input id="rBenef" list="rBenefLista" placeholder="RUT o nombre" autocomplete="off" style="width:220px"></label>
+      <datalist id="rBenefLista"></datalist>
       <span class="row" style="margin:0"><button class="btn small" data-rper="hoy">Hoy</button><button class="btn small" data-rper="mes">Este mes</button><button class="btn small" data-rper="ant">Mes anterior</button><button class="btn small" data-rper="todo">Todo</button></span>
     </div>
     <div class="kpis" id="rKpis"></div>
@@ -414,6 +417,7 @@
       <thead><tr><th>Tipo</th><th>Fuente</th><th style="text-align:right">Nóminas</th><th style="text-align:right">Pagado</th><th style="text-align:right">Rechazado</th><th style="text-align:right">Pendiente de resultado</th><th style="text-align:right" title="Pagos cash o vale vista que aún no se retiran en el banco">Por cobrar en banco</th></tr></thead>
       <tbody id="tbReporte"></tbody>
     </table></div>
+    <div id="rPagos" hidden></div>
     <div class="row"><button class="btn primary" id="btnReporte">Descargar reporte (Excel)</button><button class="btn primary" id="btnReportePdf">Descargar reporte (PDF)</button></div>
   </div>
 </section>

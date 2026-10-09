@@ -7,7 +7,7 @@ import { pdfReporte, pdfNomina, cargarPdf } from "../pdf.js";
 import { M_FORMA_ABONO } from "../catalogos.js";
 import { st, aFecha, suscribirHistorial, cargarNomina, guardarCarga, deshacerCarga, resultadoPago, pagarPendientes, cobroPago, volverPendientes, anularNomina, editarTransferencia, aplicarResultadosBanco, exportarRespaldo } from "../datos.js";
 import { leerArchivoBanco, repartir } from "../conciliar.js";
-import { $, esc, toast, accion, descargar, prefs, guardarPrefs, mensajeError } from "./comun.js";
+import { $, esc, toast, accion, descargar, prefs, guardarPrefs, mensajeError, go } from "./comun.js";
 import { fechaHora } from "./paso1.js";
 
 let openNom = null, bitView = "", detallePendiente = false;
@@ -29,7 +29,7 @@ const COBRO = { "": "Pendiente de cobro", cobrado: "Cobrado", devuelto: "No cobr
 // Período del reporte de pagos: por defecto, el mes en curso.
 const hoy = () => todayISO();
 const mesDe = (d, delta = 0) => { const a = new Date(d.getFullYear(), d.getMonth() + delta, 1), b = new Date(d.getFullYear(), d.getMonth() + delta + 1, 0); return [todayISO(a), todayISO(b)] };
-let rep = { periodo: mesDe(new Date()), tipo: "*", fuente: "*" };
+let rep = { periodo: mesDe(new Date()), tipo: "*", fuente: "*", benef: "" };
 
 export function abrirNomina(id) { openNom = id; renderBit() }
 
@@ -56,6 +56,8 @@ export function init() {
   $("rHasta").onchange = () => { rep.periodo = [rep.periodo[0], $("rHasta").value]; renderReporte() };
   $("rTipo").onchange = () => { rep.tipo = $("rTipo").value; renderReporte() };
   $("rFuente").onchange = () => { rep.fuente = $("rFuente").value; renderReporte() };
+  $("rBenef").oninput = () => { rep.benef = $("rBenef").value; renderReporte() };
+  $("rPagos").onclick = e => { const tr = e.target.closest("tr[data-nom]"); if (tr) { abrirNomina(tr.dataset.nom); $("hDetail").scrollIntoView({ behavior: "smooth", block: "start" }) } };
   document.querySelectorAll("[data-rper]").forEach(b => b.onclick = () => {
     const k = b.dataset.rper;
     rep.periodo = k === "hoy" ? [hoy(), hoy()] : k === "mes" ? mesDe(new Date()) : k === "ant" ? mesDe(new Date(), -1) : ["", ""];
@@ -64,11 +66,14 @@ export function init() {
   // Excel y PDF del reporte: mismo período, filtros y tablas.
   const armarReporte = () => {
     const r = reportePagos(st.nominas, filtroReporte());
-    if (!r.nominas.length) { toast("No hay nóminas cargadas con fecha de pago en ese período"); return null }
+    if (!r.nominas.length) { toast(S(rep.benef) ? "No hay pagos a ese proveedor o beneficiario en el período" : "No hay nóminas cargadas con fecha de pago en ese período"); return null }
     const [d, h] = rep.periodo;
-    const nombre = "reporte_pagos_" + (d || h ? (d || "inicio").replace(/-/g, "") + "_" + (h || "hoy").replace(/-/g, "") : "todo");
+    // Con un solo beneficiario, el archivo y los filtros llevan su RUT y nombre.
+    const benefs = [...new Map(r.nominas.flatMap(n => n.pagos.map(p => [p.rut, p.nombre])))];
+    const benef = !S(rep.benef) ? "" : benefs.length === 1 ? `${fmtRut(benefs[0][0])} ${benefs[0][1]}` : `“${S(rep.benef)}”`;
+    const nombre = "reporte_pagos_" + (S(rep.benef) ? (benefs.length === 1 ? benefs[0][0] : "busqueda") + "_" : "") + (d || h ? (d || "inicio").replace(/-/g, "") + "_" + (h || "hoy").replace(/-/g, "") : "todo");
     const tipos = { "*": "Todas", ...TIPOS_REGISTRO };
-    const meta = { desde: d, hasta: h, filtros: `Tipo: ${tipos[rep.tipo]} · Fuente: ${rep.fuente === "*" ? "Todas" : rep.fuente}`, generado: fmtISO(todayISO()) + " " + new Date().toTimeString().slice(0, 5), por: nombreDe(st.email) };
+    const meta = { desde: d, hasta: h, filtros: `Tipo: ${tipos[rep.tipo]} · Fuente: ${rep.fuente === "*" ? "Todas" : rep.fuente}${benef ? " · Beneficiario: " + benef : ""}`, generado: fmtISO(todayISO()) + " " + new Date().toTimeString().slice(0, 5), por: nombreDe(st.email) };
     return { r, nombre, meta };
   };
   $("btnReporte").onclick = () => {
@@ -148,7 +153,16 @@ export function renderBit() {
   renderReporte();
 }
 
-const filtroReporte = () => ({ desde: rep.periodo[0], hasta: rep.periodo[1], tipo: rep.tipo, fuente: rep.fuente });
+const filtroReporte = () => ({ desde: rep.periodo[0], hasta: rep.periodo[1], tipo: rep.tipo, fuente: rep.fuente, beneficiario: rep.benef });
+
+// Desde la ficha del proveedor: sus pagos de todas las fechas en el reporte de la bitácora.
+export function verPagosDe(rut) {
+  rep = { periodo: ["", ""], tipo: "*", fuente: "*", benef: fmtRut(rut) };
+  $("rBenef").value = rep.benef;
+  go(4);
+  renderReporte();
+  setTimeout(() => $("cardReporte").scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+}
 
 // Reporte de pagos: resumen en pantalla del período elegido (se actualiza en tiempo real).
 function renderReporte() {
@@ -157,12 +171,34 @@ function renderReporte() {
   if (rep.fuente !== "*" && !fus.includes(rep.fuente)) rep.fuente = "*";
   $("rFuente").innerHTML = `<option value="*">Todas</option>` + fus.map(f => `<option value="${esc(f)}"${f === rep.fuente ? " selected" : ""}>${esc(f)}</option>`).join("");
   const r = reportePagos(st.nominas, filtroReporte()), t = r.tot;
+  // Sugerencias del buscador: proveedores del maestro y beneficiarios de las nóminas.
+  const sug = new Map(Object.values(st.maestro).map(p => [p.rut, p.nombre]));
+  st.nominas.forEach(n => n.pagos.forEach(p => { if (!sug.has(p.rut)) sug.set(p.rut, p.nombre) }));
+  if ($("rBenefLista").childElementCount !== sug.size) $("rBenefLista").innerHTML = [...sug].map(([rut, nom]) => `<option value="${esc(fmtRut(rut))}">${esc(nom)}</option>`).join("");
+  if (document.activeElement !== $("rBenef")) $("rBenef").value = rep.benef;
+  renderPagosBenef(r);
   $("rKpis").innerHTML = `<div class="kpi hero"><span class="kpi-t">Pagado</span><b>${money(t.pagado)}</b><small>${t.nPagado} pago${t.nPagado === 1 ? "" : "s"} en ${t.nominas} nómina${t.nominas === 1 ? "" : "s"}${t.porCobrar ? ` · ${money(t.porCobrar)} por cobrar en banco` : ""}</small></div>`
     + `<div class="kpi"><span class="kpi-t">Rechazado</span><b>${money(t.rechazado)}</b><small>${t.nRechazado} pago${t.nRechazado === 1 ? "" : "s"}</small></div>`
     + `<div class="kpi"><span class="kpi-t">Pendiente de resultado</span><b>${money(t.pendiente)}</b><small>${t.nPendiente} pago${t.nPendiente === 1 ? "" : "s"}</small></div>`;
   $("tbReporte").innerHTML = r.resumen.length ? r.resumen.map(g => `<tr><td>${g.tipo}</td><td>${esc(g.fuente)}</td><td class="num">${g.nominas}</td><td class="num"><b>${money(g.pagado)}</b></td><td class="num">${money(g.rechazado)}</td><td class="num">${money(g.pendiente)}</td><td class="num">${money(g.porCobrar)}</td></tr>`).join("")
     + (r.resumen.length > 1 ? `<tr><td colspan="2"><b>Total</b></td><td class="num"><b>${t.nominas}</b></td><td class="num"><b>${money(t.pagado)}</b></td><td class="num"><b>${money(t.rechazado)}</b></td><td class="num"><b>${money(t.pendiente)}</b></td><td class="num"><b>${money(t.porCobrar)}</b></td></tr>` : "")
     : `<tr><td colspan="7" class="empty">No hay nóminas cargadas con fecha de pago en este período.</td></tr>`;
+}
+
+// Con un proveedor o beneficiario elegido, la lista de sus pagos (uno por fila).
+function renderPagosBenef(r) {
+  const box = $("rPagos");
+  if (!S(rep.benef)) { box.hidden = true; box.innerHTML = ""; return }
+  box.hidden = false;
+  const filas = r.nominas.flatMap(n => n.pagos.map(p => ({ n, p }))).sort((a, b) => S(b.n.fechaPago || b.n.fechaCarga).localeCompare(S(a.n.fechaPago || a.n.fechaCarga)) || b.n.num - a.n.num);
+  const nombres = [...new Set(filas.map(f => fmtRut(f.p.rut) + " " + f.p.nombre))];
+  const quien = nombres.length === 1 ? nombres[0] : `“${rep.benef}” (${nombres.length} beneficiarios)`;
+  const resultado = (n, p) => noCobrado(n, p) ? "No cobrado" : porCobrar(n, p) ? "Pagado, por cobrar en banco" : EST_PAGO[p.estado] + (p.estado === "rechazado" && p.motivo ? ": " + p.motivo : "");
+  const detalle = (n, p) => conDocumentos(n) ? p.docs.map(d => `${esc(d.ndoc)} <span class="hint">${esc((M_TIPO[d.tipo] || d.tipo || "").replace(" electrónica", " e."))}</span>`).join(", ") : esc([...new Set(p.docs.map(d => d.concepto || n.concepto).filter(Boolean))].join(", "));
+  box.innerHTML = `<h3>Pagos a ${esc(quien)}</h3>` + (filas.length ? `<div class="tablebox"><table>
+    <thead><tr><th>Fecha de pago</th><th>Nómina</th><th>N° BancoEstado</th><th>Tipo · fuente</th>${nombres.length > 1 ? "<th>Beneficiario</th>" : ""}<th>Documentos / concepto</th><th style="text-align:right">Monto</th><th>Resultado</th></tr></thead>
+    <tbody>${filas.map(({ n, p }) => `<tr class="clickable" data-nom="${esc(n.id)}" title="Abrir la ${tipoDe(n) === "transferencia" ? "transferencia" : "nómina"}"><td>${fmtISO(n.fechaPago || n.fechaCarga)}</td><td>${tipoDe(n) === "transferencia" ? "Transf. " : "N° "}${n.num}</td><td class="mono">${esc(n.operacion)}</td><td>${TIPOS_REGISTRO[tipoDe(n)]} · ${esc(n.fuente)}</td>${nombres.length > 1 ? `<td>${esc(fmtRut(p.rut))} ${esc(p.nombre)}</td>` : ""}<td>${detalle(n, p)}</td><td class="num">${money(p.monto)}</td><td>${esc(resultado(n, p))}</td></tr>`).join("")}</tbody>
+  </table></div>` : `<p class="hint">Sin pagos a ese proveedor o beneficiario en el período elegido${rep.periodo[0] || rep.periodo[1] ? "; prueba con <b>Todo</b>" : ""}.</p>`);
 }
 
 const escribiendo = () => { const a = document.activeElement; return $("hDetail").contains(a) && (a.tagName === "INPUT" || a.tagName === "TEXTAREA") };
