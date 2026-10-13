@@ -424,14 +424,14 @@ ok("reporte de pagos filtrado por proveedor o beneficiario (RUT o nombre)", () =
     assert.deepEqual(f[10], ["Rut", "Nombre", "Centro Negocio", "Tipo Abono", "Banco", "Monto Total $", "Estado", "Motivo", "N° Documento", "Tipo Documento", "Fecha Emisión", "Monto $"]);
     assert.deepEqual(f.slice(11), [
       ["11.111.111-1", "COMERCIAL UNO LIMITADA  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCO SANTANDER-CHILE", "$ 250.000", "Pagado", " ".repeat(20), 101, "FACTURA ELECTRONICA", "31/08/2026", "$ 200.000"],
-      ["11.111.111-1", "COMERCIAL UNO LIMITADA  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCO SANTANDER-CHILE", "$ 250.000", "Pagado", " ".repeat(20), 102, "FACTURA NO AFECTA O EXENTA ELECTRONICA", "01/09/2026", "$ 50.000"],
+      ["11.111.111-1", "COMERCIAL UNO LIMITADA  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCO SANTANDER-CHILE", "$ 250.000", "Pagado", " ".repeat(20), 102, "FACTURA EXENTA ELECTRONICA", "01/09/2026", "$ 50.000"],
       ["22.222.222-2", "SERVICIOS DOS SPA  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCOESTADO", "$ 110.000", "Rechazado", "CUENTA CERRADA", 7, "NOTA DE CREDITO ELECTRONICA", "02/09/2026", "$ 110.000"]]);
     // Estructura como la del banco: combinadas, estilos y ancho = texto más largo + 2.
     assert.match(p.hoja, /<mergeCells count="2"><mergeCell ref="A1:D2"\/><mergeCell ref="A5:D5"\/><\/mergeCells>/);
     assert.match(p.hoja, /<dimension ref="A1:L14"\/>/);
     assert.match(p.hoja, /<row r="1" spans="1:4" s="1" customFormat="1" x14ac:dyDescent="0.25"><c r="A1" s="1" t="s"><v>0<\/v><\/c><c r="B1" s="1"\/>/);
     assert.match(p.hoja, /<c r="D6" s="4"><v>900500<\/v><\/c>/);
-    assert.match(p.hoja, /<col min="10" max="10" width="40" customWidth="1"\/>/); // "FACTURA NO AFECTA O EXENTA ELECTRONICA"
+    assert.match(p.hoja, /<col min="10" max="10" width="29" customWidth="1"\/>/); // "NOTA DE CREDITO ELECTRONICA"
     assert.match(p.hoja, /<col min="8" max="8" width="22" customWidth="1"\/>/); // 20 espacios
     assert.match(p.sst, /^<\?xml version="1.0" encoding="UTF-8" standalone="yes"\?>\n<sst [^>]* count="\d+" uniqueCount="\d+">/);
     assert.match(p.sst, /<si><t xml:space="preserve">SLEP EJEMPLO PROVEEDORES\(PROV-000\)\t<\/t><\/si>/);

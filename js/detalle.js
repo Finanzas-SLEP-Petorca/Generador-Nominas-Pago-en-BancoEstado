@@ -31,7 +31,7 @@ export function formaDetalle(forma) {
 }
 
 // Tipo de documento como lo escribe el banco ("FACTURA ELECTRONICA").
-const TIPO_BANCO = { "34": "FACTURA NO AFECTA O EXENTA ELECTRONICA" };
+const TIPO_BANCO = { "34": "FACTURA EXENTA ELECTRONICA" };
 export const tipoDocDetalle = t => TIPO_BANCO[t] || cleanName(M_TIPO[t] || t);
 
 // Concepto del pago en el banco: lo define el convenio y el tipo de carga.

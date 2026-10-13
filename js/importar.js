@@ -8,7 +8,7 @@ import { codigoBanco } from "./comprobante.js";
 
 // Tipo de documento: el código del SII ("33", "33 Factura…") o el nombre que
 // escribe BancoEstado en su Detalle de Nómina ("FACTURA ELECTRONICA",
-// "FACTURA NO AFECTA O EXENTA ELECTRONICA", "NOTA DE CREDITO ELECTRONICA").
+// "FACTURA EXENTA ELECTRONICA" o "FACTURA NO AFECTA O EXENTA ELECTRONICA", "NOTA DE CREDITO ELECTRONICA").
 const llaveTipo = v => cleanName(v).replace(/\b(DE|NO AFECTA O)\b/g, " ").replace(/\s+/g, " ").trim();
 const TIPO_POR_NOMBRE = Object.fromEntries(TIPOS.map(([c, n]) => [llaveTipo(n), c]));
 export function tipoDoc(v) {
