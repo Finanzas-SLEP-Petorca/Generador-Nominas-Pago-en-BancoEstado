@@ -355,6 +355,30 @@ try {
     assert.deepEqual(guardado, ["SLEP EJEMPLO PROVEEDORES(PROV-000)", "P02_EJEMPLO_GENERAL"]);
     assert.equal(await A.inputValue("#nConvSel"), "SLEP EJEMPLO PROVEEDORES(PROV-000)"); // ahora en la lista desplegable
     log("Detalle de Nómina en formato BancoEstado:", det.nombre, "·", f.length - 11, "documentos ·", estados.join(", "), "· convenio y nombre guardados en la nómina");
+    // El reporte del banco de esta nómina, ya registrada: trae el nombre de la nómina, un
+    // beneficiario con el nombre como lo tiene el banco y una cuenta vista que el banco
+    // llama "Chequera Electrónica". "Guardar los datos del banco" los deja en la nómina.
+    const nom1 = f[11][1].trim();
+    const banco = f.map((r, i) => i === 6 ? [r[0], "P02_BANCO_GENERAL", r[2], r[3]] : i >= 11 && r[1].trim() === nom1 ? [r[0], "UNO BANCO  ", r[2], "Abono en Chequera Electrónica / Cuenta Vista", ...r.slice(4)] : r);
+    const wbB = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wbB, XLSX.utils.aoa_to_sheet(banco), "DetalleNomina");
+    await A.setInputFiles("#fReporteBanco", { name: "banco.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from(XLSX.write(wbB, { type: "buffer", bookType: "xlsx" })) });
+    await esperar(A, () => !!document.getElementById("concAplicar"));
+    assert.equal(await A.textContent("#concAplicar"), "Guardar los datos del banco");
+    assert.match(await A.textContent("#cardConciliar"), /nombre de la nómina P02_BANCO_GENERAL, nombre y forma de pago de \d+ beneficiario/);
+    await A.click("#concAplicar");
+    await esperar(A, () => document.getElementById("cardConciliar").hidden);
+    assert.match(await toastTxt(A), /Datos del banco guardados/);
+    await esperar(A, id => document.getElementById("hDetail").dataset.id === id && document.getElementById("nNomBanco")?.value === "P02_BANCO_GENERAL", nDet);
+    const det2 = await descarga(A, () => A.click("#nDetalleBanco"));
+    const f2 = XLSX.utils.sheet_to_json(XLSX.read(det2.bytes, { type: "buffer" }).Sheets.DetalleNomina, { header: 1, raw: true, defval: "" });
+    assert.equal(f2[6][1], "P02_BANCO_GENERAL");
+    assert.deepEqual(f2.slice(11).filter(r => r[1] === "UNO BANCO  ").map(r => r[3]), f.slice(11).filter(r => r[1].trim() === nom1).map(() => "Abono en Chequera Electrónica / Cuenta Vista"));
+    // Volver a subirlo ya no tiene nada que guardar.
+    await A.setInputFiles("#fReporteBanco", { name: "banco.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from(XLSX.write(wbB, { type: "buffer", bookType: "xlsx" })) });
+    await esperar(A, () => !document.getElementById("cardConciliar").hidden);
+    assert.ok(!(await A.$("#concAplicar")), "no debería haber nada que guardar");
+    await A.click("#concCerrar");
+    log("Detalle de Nómina: el reporte del banco deja el nombre de la nómina, y el nombre y la forma de pago como los escribe el banco");
   }
   // Pagos a un proveedor: desde su ficha, "Ver pagos" deja el reporte de la bitácora solo con sus pagos, de todas las fechas.
   {

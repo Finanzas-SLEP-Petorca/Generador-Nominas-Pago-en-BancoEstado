@@ -97,6 +97,22 @@ prueba("por documento como lo descarga el banco: cada documento es un pago con s
   assert.deepEqual(c.avisos, []);
 });
 
+prueba("guarda el nombre y la forma de pago como los escribe el banco, solo si cambian", () => {
+  const filas = [...cabecera("900001", "P02_EJEMPLO_GENERAL", "$3.000", 2, "Aceptada"), H_DOC,
+    docFila(R1, "PROVEEDOR UNO  ", "$ 1.000", "Pagado", "", "201", "$ 1.000"),
+    docFila(R2, "PROV DOS", "$ 2.000", "Pagado", "", "349", "$ 2.000")];
+  const r = leerReporteBanco(filas);
+  assert.equal(r.pagos[0].forma, "Abono en Cuenta Corriente / Cuenta Vista");
+  const c = conciliar(r, nomina());
+  assert.deepEqual(c.detalle, [
+    { rut: n1, monto: 1000, nombre: "PROVEEDOR UNO", forma: "Abono en Cuenta Corriente / Cuenta Vista" },
+    { rut: n2, monto: 2000, nombre: "PROV DOS", forma: "Abono en Cuenta Corriente / Cuenta Vista" }]);
+  // Ya guardados: no se vuelven a proponer.
+  const n = nomina(); n.pagos[0].formaBanco = "Abono en Cuenta Corriente / Cuenta Vista";
+  n.pagos[1].nombreBanco = "PROV DOS"; n.pagos[1].formaBanco = "Abono en Cuenta Corriente / Cuenta Vista";
+  assert.deepEqual(conciliar(r, n).detalle, []);
+});
+
 prueba("un archivo que no es del banco se rechaza", () => {
   const r = leerReporteBanco([["cualquier cosa"], ["otra fila"]]);
   assert.equal(r.ok, false);

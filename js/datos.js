@@ -450,16 +450,27 @@ export const aplicarResultadosBanco = (id, resultados, archivo, meta = {}) => mo
     if (r.estado !== "pagado" && (p.cobro || p.cobroFecha)) { p.cobro = ""; p.cobroFecha = "" }
     hechos.push({ p, antes });
   });
-  const datosBanco = {};
+  // Nombre y forma de pago como los escribe el banco (para el Detalle de Nómina).
+  let nDetalle = 0;
+  (meta.detalle || []).forEach(d => {
+    const p = pagos.find(x => x.rut === d.rut && x.monto === d.monto); if (!p) return;
+    const nombre = S(d.nombre) && S(d.nombre) !== S(p.nombre) ? S(d.nombre) : "", forma = S(d.forma);
+    if (S(p.nombreBanco) === nombre && S(p.formaBanco) === forma) return;
+    if (nombre) p.nombreBanco = nombre; else delete p.nombreBanco;
+    if (forma) p.formaBanco = forma; else delete p.formaBanco;
+    nDetalle++;
+  });
+  const datosBanco = nDetalle ? { pagos } : {};
   if (S(meta.convenio) && S(meta.convenio) !== S(n.convenioBanco)) datosBanco.convenioBanco = S(meta.convenio);
   if (S(meta.nombreNomina) && S(meta.nombreNomina) !== S(n.nombreBanco)) datosBanco.nombreBanco = S(meta.nombreNomina);
-  if (!hechos.length) return { cambios: datosBanco, salida: { aplicados: 0, omitidos } };
+  if (!hechos.length) return { cambios: datosBanco, salida: { aplicados: 0, detalle: nDetalle, omitidos },
+    hist: Object.keys(datosBanco).length ? [hist("datos del banco", refN(n), `Del reporte de BancoEstado${archivo ? ", archivo " + archivo : ""}, para el Detalle de Nómina: ${[datosBanco.nombreBanco ? "nombre " + datosBanco.nombreBanco : "", datosBanco.convenioBanco ? "convenio" : "", nDetalle ? `nombre y forma de pago de ${nDetalle} beneficiario${nDetalle > 1 ? "s" : ""}` : ""].filter(Boolean).join(", ")}`, { nombreBanco: S(n.nombreBanco) }, { nombreBanco: S(datosBanco.nombreBanco || n.nombreBanco) })] : [] };
   const pgd = hechos.filter(h => h.p.estado === "pagado"), rch = hechos.filter(h => h.p.estado === "rechazado");
   const suma = l => money(l.reduce((s, h) => s + h.p.monto, 0));
   const resumen = [pgd.length ? `${pgd.length} pagado${pgd.length > 1 ? "s" : ""} (${suma(pgd)})` : "",
                    rch.length ? `${rch.length} rechazado${rch.length > 1 ? "s" : ""} (${suma(rch)})` : ""].filter(Boolean).join(", ");
   return {
-    cambios: { pagos, ...datosBanco }, salida: { aplicados: hechos.length, omitidos },
+    cambios: { ...datosBanco, pagos }, salida: { aplicados: hechos.length, detalle: nDetalle, omitidos },
     hist: [
       hist("resultado del banco", refN(n), `Del reporte de BancoEstado${archivo ? ", archivo " + archivo : ""}: ${resumen}`, { archivo: S(archivo) }, { pagos: hechos.length }),
       ...hechos.map(h => hist("resultado de pago", refN(n), `${fmtRut(h.p.rut)} ${h.p.nombre} (${money(h.p.monto)}): ${h.antes.estado} → ${h.p.estado}${h.p.motivo ? ", motivo: " + h.p.motivo : ""} (reporte del banco)`, h.antes, { estado: h.p.estado, motivo: h.p.motivo }))

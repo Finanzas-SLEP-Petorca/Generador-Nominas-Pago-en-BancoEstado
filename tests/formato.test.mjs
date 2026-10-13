@@ -429,6 +429,11 @@ ok("reporte de pagos filtrado por proveedor o beneficiario (RUT o nombre)", () =
       ["11.111.111-1", "COMERCIAL UNO LIMITADA  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCO SANTANDER-CHILE", "$ 200.000", "Pagado", " ".repeat(20), 101, "FACTURA ELECTRONICA", "31/08/2026", "$ 200.000"],
       ["11.111.111-1", "COMERCIAL UNO LIMITADA  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCO SANTANDER-CHILE", "$ 50.000", "Pagado", " ".repeat(20), 102, "FACTURA EXENTA ELECTRONICA", "01/09/2026", "$ 50.000"],
       ["22.222.222-2", "SERVICIOS DOS SPA  ", "", "Abono en Chequera Electrónica / Cuenta Vista", "BANCOESTADO", "$ 110.000", "Rechazado", "CUENTA CERRADA", 7, "NOTA DE CREDITO ELECTRONICA", "02/09/2026", "$ 110.000"]]);
+    // Con el nombre y la forma que guardó el reporte del banco, salen como los escribe el banco.
+    const conBanco = { ...prov, pagos: [{ ...prov.pagos[0], nombreBanco: "COMERCIAL UNO LTDA", formaBanco: "Abono en Chequera Electrónica / Cuenta Vista" }, prov.pagos[1]] };
+    const fb = Dt.filasDetalle(conBanco, { ahora }, {}).filas;
+    assert.deepEqual(fb[1].slice(1, 4), ["COMERCIAL UNO LTDA  ", "", "Abono en Chequera Electrónica / Cuenta Vista"]);
+    assert.equal(fb[3][1], "SERVICIOS DOS SPA  ");
     // Estructura como la del banco: combinadas, estilos y ancho = texto más largo + 2.
     assert.match(p.hoja, /<mergeCells count="2"><mergeCell ref="A1:D2"\/><mergeCell ref="A5:D5"\/><\/mergeCells>/);
     assert.match(p.hoja, /<dimension ref="A1:L14"\/>/);

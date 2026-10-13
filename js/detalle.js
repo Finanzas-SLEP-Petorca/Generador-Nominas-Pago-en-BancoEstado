@@ -74,6 +74,11 @@ export function fechaEncabezado(d) {
 // la línea 1 del archivo (["1", rut, nombre, email, banco, forma, cuenta, …]).
 const formaPago = (n, p) => S(p.forma) || S(((n.lineas || []).find(l => +l.tipo === 1 && l.f && l.f[1] === p.rut && S(l.f[6]) === S(p.cuenta)) || { f: [] }).f[5]);
 
+// Al cargar el reporte del banco se guarda en el pago el nombre y la forma como
+// los escribe el banco (nombreBanco, formaBanco); si no, salen los del panel.
+const nombreBancoDe = p => S(p.nombreBanco) || S(p.nombre);
+const formaBancoDe = (n, p) => S(p.formaBanco) || formaDetalle(formaPago(n, p));
+
 // Filas del detalle: cada celda es texto, número o null (celda vacía con estilo).
 // meta: { convenio, nombreBanco, ahora: Date }.
 export function filasDetalle(n, { convenio = "", nombreBanco = "", ahora = new Date() } = {}, catalogoBancos = {}) {
@@ -82,12 +87,12 @@ export function filasDetalle(n, { convenio = "", nombreBanco = "", ahora = new D
   if (abonos) {
     filas.push(["Rut", "Nombre", "Fecha Abono", "Forma Abono", "Banco", "Código Propio", "N° Cuenta", "Estado Abono", "Motivo", "Monto Abono"]);
     // En esta vista el nombre sale tal como se subió (sin los dos espacios de Ver Documentos).
-    n.pagos.forEach(p => filas.push([fmtRut(p.rut), S(p.nombre), ddmmaaaa(n.fechaPago || n.fechaCarga), formaDetalle(p.forma), bancoDetalle(p.banco, catalogoBancos), "",
+    n.pagos.forEach(p => filas.push([fmtRut(p.rut), nombreBancoDe(p), ddmmaaaa(n.fechaPago || n.fechaCarga), formaBancoDe(n, p), bancoDetalle(p.banco, catalogoBancos), "",
       FORMAS_SIN_CUENTA.has(p.forma) ? "" : S(p.cuenta), estadoBanco(n, p), motivoBanco(p), pesos(p.monto)]));
   } else {
     filas.push(["Rut", "Nombre", "Centro Negocio", "Tipo Abono", "Banco", "Monto Total $", "Estado", "Motivo", "N° Documento", "Tipo Documento", "Fecha Emisión", "Monto $"]);
     // El banco cuenta cada documento como un pago: "Monto Total $" es el del documento.
-    n.pagos.forEach(p => p.docs.forEach(d => filas.push([fmtRut(p.rut), S(p.nombre) + "  ", "", formaDetalle(formaPago(n, p)), bancoDetalle(p.banco, catalogoBancos), pesos(d.monto), estadoBanco(n, p), motivoBanco(p),
+    n.pagos.forEach(p => p.docs.forEach(d => filas.push([fmtRut(p.rut), nombreBancoDe(p) + "  ", "", formaBancoDe(n, p), bancoDetalle(p.banco, catalogoBancos), pesos(d.monto), estadoBanco(n, p), motivoBanco(p),
       /^\d{1,15}$/.test(S(d.ndoc)) ? Number(d.ndoc) : S(d.ndoc), tipoDocDetalle(d.tipo), fechaDoc(d.fecha), pesos(d.monto)])));
   }
   const datos = filas.slice(1);

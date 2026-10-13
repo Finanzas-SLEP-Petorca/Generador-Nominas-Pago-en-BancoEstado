@@ -250,6 +250,11 @@ function renderConciliacion() {
   box.hidden = false;
   const res = repartir(conc, st.nominas);
   const total = res.reduce((a, r) => a + (r.cambios ? r.cambios.length : 0), 0);
+  // Datos para el Detalle de Nómina: nombre de la nómina, convenio, y nombre y forma de cada pago como los escribe el banco.
+  const metaDe = r => ({ convenio: S(r.rep && r.rep.convenio), nombreNomina: S(r.rep && r.rep.nombreNomina), detalle: r.detalle || [] });
+  // Solo de un archivo que calza entero (sin avisos) o junto con resultados nuevos.
+  const datosNuevos = r => { if (r.error || !r.nomina || ((r.avisos || []).length > (r.reintegrados || 0) && !(r.cambios || []).length)) return 0; const m = metaDe(r); return m.detalle.length + ((m.convenio && m.convenio !== S(r.nomina.convenioBanco)) || (m.nombreNomina && m.nombreNomina !== S(r.nomina.nombreBanco)) ? 1 : 0) };
+  const extra = res.reduce((a, r) => a + datosNuevos(r), 0);
 
   const bloques = res.map((r, k) => {
     const cab = `<div class="row" style="margin-top:0;justify-content:space-between"><b>${esc(r.archivo)}</b>${r.rep && r.rep.operacion ? `<span class="hint">BancoEstado N° ${esc(r.rep.operacion)}${r.rep.estadoNomina ? " · " + esc(r.rep.estadoNomina) : ""}</span>` : ""}</div>`;
@@ -259,14 +264,18 @@ function renderConciliacion() {
     const tabla = filas ? `<div class="tablebox"><table><thead><tr><th>RUT</th><th>Beneficiario</th><th style="text-align:right">Monto</th><th>Queda como</th><th>Motivo del banco</th></tr></thead><tbody>${filas}</tbody></table></div>` : "";
     const ya = (r.iguales || []).length ? `<p class="hint" style="margin:8px 0 0">${r.iguales.length} pago${r.iguales.length > 1 ? "s" : ""} ya ${r.iguales.length > 1 ? "estaban" : "estaba"} registrado${r.iguales.length > 1 ? "s" : ""} así; no se ${r.iguales.length > 1 ? "tocan" : "toca"}.</p>` : "";
     const avisos = (r.avisos || []).length ? `<ul class="hint" style="margin:8px 0 0;padding-left:18px">${r.avisos.map(a => `<li>${esc(a)}</li>`).join("")}</ul>` : "";
-    const nada = !filas && !ya ? `<p class="hint" style="margin:6px 0 0">Nada que registrar desde este archivo.</p>` : "";
-    return `<div class="conc">${cab}<p class="hint" style="margin:4px 0 0">Nómina <a data-conc-go="${esc(n.id)}">N° ${n.num}</a> · ${esc(n.fuente)} · ${esAbonos(n) ? "Remuneraciones" : "Proveedores"} · <span class="tag ${s.c}">${esc(s.t)}</span></p>${tabla}${ya}${avisos}${nada}</div>`;
+    const dat = datosNuevos(r) ? `<p class="hint" style="margin:8px 0 0">Se guardan como los escribe el banco, para emitir el Detalle de Nómina igual: ${[
+      (metaDe(r).nombreNomina && metaDe(r).nombreNomina !== S(n.nombreBanco)) ? `nombre de la nómina <b>${esc(metaDe(r).nombreNomina)}</b>` : "",
+      (metaDe(r).convenio && metaDe(r).convenio !== S(n.convenioBanco)) ? "convenio" : "",
+      r.detalle.length ? `nombre y forma de pago de ${r.detalle.length} beneficiario${r.detalle.length > 1 ? "s" : ""}` : ""].filter(Boolean).join(", ")}.</p>` : "";
+    const nada = !filas && !ya && !dat ? `<p class="hint" style="margin:6px 0 0">Nada que registrar desde este archivo.</p>` : "";
+    return `<div class="conc">${cab}<p class="hint" style="margin:4px 0 0">Nómina <a data-conc-go="${esc(n.id)}">N° ${n.num}</a> · ${esc(n.fuente)} · ${esAbonos(n) ? "Remuneraciones" : "Proveedores"} · <span class="tag ${s.c}">${esc(s.t)}</span></p>${tabla}${ya}${dat}${avisos}${nada}</div>`;
   }).join("");
 
   box.innerHTML = `<div class="row" style="margin-top:0;justify-content:space-between"><h2 style="margin:0">Reporte de BancoEstado</h2><button class="btn small" id="concCerrar">Cerrar ✕</button></div>
     <p class="sub" style="margin-top:4px">Esto es lo que se registraría. Revísalo y aplícalo; hasta entonces no se escribe nada. Un pago cuyo monto no calce con el del banco, o con un estado que el panel no reconozca, se deja para registrar a mano.</p>
     ${bloques}
-    <div class="row">${total ? `<button class="btn primary" id="concAplicar">Registrar ${total} resultado${total > 1 ? "s" : ""}</button>` : `<span class="hint">No hay resultados nuevos que registrar.</span>`}<button class="btn" id="concCancelar">Cancelar</button></div>`;
+    <div class="row">${total ? `<button class="btn primary" id="concAplicar">Registrar ${total} resultado${total > 1 ? "s" : ""}</button>` : extra ? `<button class="btn primary" id="concAplicar">Guardar los datos del banco</button>` : `<span class="hint">No hay resultados nuevos que registrar.</span>`}<button class="btn" id="concCancelar">Cancelar</button></div>`;
 
   $("concCerrar").onclick = cerrarConciliacion;
   $("concCancelar").onclick = cerrarConciliacion;
@@ -276,24 +285,25 @@ function renderConciliacion() {
     // Una transacción por nómina: si dos archivos son de la misma, se agrupan.
     const porNomina = new Map();
     res.forEach(r => {
-      if (r.error || !r.cambios || !r.cambios.length) return;
-      const e = porNomina.get(r.nomina.id) || { n: r.nomina, archivos: [], resultados: new Map(), meta: { convenio: r.rep && r.rep.convenio, nombreNomina: r.rep && r.rep.nombreNomina } };
+      if (r.error || !((r.cambios || []).length || datosNuevos(r))) return;
+      const e = porNomina.get(r.nomina.id) || { n: r.nomina, archivos: [], resultados: new Map(), meta: { ...metaDe(r), detalle: [] } };
       e.archivos.push(r.archivo);
+      e.meta.detalle.push(...(r.detalle || []));
       r.cambios.forEach(c => e.resultados.set(c.rut + "|" + c.monto, { rut: c.rut, monto: c.monto, estado: c.estado, motivo: c.motivo }));
       porNomina.set(r.nomina.id, e);
     });
-    let aplicados = 0; const problemas = [];
+    let aplicados = 0, datos = 0; const problemas = [];
     for (const e of porNomina.values()) {
       try {
         const out = await aplicarResultadosBanco(e.n.id, [...e.resultados.values()], e.archivos.join(", "), e.meta);
-        aplicados += (out && out.aplicados) || 0;
+        aplicados += (out && out.aplicados) || 0; datos += (out && out.detalle) || 0;
         (out && out.omitidos || []).forEach(o => problemas.push(`N° ${e.n.num}: ${o}`));
       } catch (err) { problemas.push(`N° ${e.n.num}: ${mensajeError(err)}`); }
     }
     conc = null; renderBit();
     toast(aplicados
       ? `${aplicados} resultado${aplicados > 1 ? "s" : ""} registrado${aplicados > 1 ? "s" : ""} desde el reporte del banco` + (problemas.length ? `. ${problemas.length} quedaron sin aplicar` : "")
-      : problemas.length ? "No se registró nada: " + problemas[0] : "No había nada que registrar");
+      : problemas.length ? "No se registró nada: " + problemas[0] : extra || datos ? "Datos del banco guardados para el Detalle de Nómina" : "No había nada que registrar");
     if (problemas.length) console.warn("Sin aplicar:", problemas);
   });
 }

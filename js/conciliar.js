@@ -49,7 +49,7 @@ export function leerReporteBanco(filas) {
   for (let i = hi + 1; i < filas.length; i++) {
     const g = k => k in map ? filas[i][map[k]] : "";
     const rut = normRut(g("rut")); if (!rut) continue;
-    pagos.push({ rut, nombre: S(g("nombre")), monto: parseMonto(g("monto")), estado: S(g("estado")), motivo: S(g("motivo")) });
+    pagos.push({ rut, nombre: S(g("nombre")), forma: S(g("forma")), monto: parseMonto(g("monto")), estado: S(g("estado")), motivo: S(g("motivo")) });
   }
   const operacion = S(enc["n nomina"]);
   if (!operacion) return { ok: false, error: "El archivo no trae el N° de nómina de BancoEstado." };
@@ -83,7 +83,8 @@ export function conciliar(rep, n) {
   if (n.estado === "anulada") return { error: `La nómina N° ${n.num} está anulada.` };
   if (n.estado !== "cargada") return { error: `La nómina N° ${n.num} no está cargada en el banco; primero regístrala como cargada.` };
 
-  const cambios = [], iguales = [], avisos = [];
+  const cambios = [], iguales = [], avisos = [], detalle = [];
+  let reintegrados = 0;
   // Por documento el banco cuenta cada documento como un pago.
   const nDocs = n.pagos.reduce((a, p) => a + ((p.docs || []).length || 1), 0);
   if (rep.cantidadPagos && rep.cantidadPagos !== n.pagos.length && !(rep.porDocumento && rep.cantidadPagos === nDocs))
@@ -109,10 +110,14 @@ export function conciliar(rep, n) {
     if (!f) { avisos.push(`${quien}: el banco no lo informa en este archivo.`); return }
     vistos.add(p.rut);
     if (f.conflicto) { avisos.push(`${quien}: el archivo trae más de un resultado para el mismo RUT; regístralo a mano.`); return }
-    // Un pago ya reintegrado a pendientes no se vuelve a tocar.
-    if (p.reint) { avisos.push(`${quien}: ya se reintegró a pendientes; no se modifica.`); return }
     // Por documento, "Monto Total $" es el de cada documento: el pago es la suma.
-    if (!isNaN(f.monto) && f.monto !== p.monto && f.suma !== p.monto) {
+    const montoOk = isNaN(f.monto) || f.monto === p.monto || f.suma === p.monto;
+    // Nombre y forma de pago como los escribe el banco, para emitir después el Detalle de Nómina igual.
+    if (montoOk && ((f.nombre && f.nombre !== S(p.nombreBanco || p.nombre)) || (f.forma && f.forma !== S(p.formaBanco))))
+      detalle.push({ rut: p.rut, monto: p.monto, nombre: f.nombre, forma: f.forma });
+    // Un pago ya reintegrado a pendientes no se vuelve a tocar (no es un problema del archivo).
+    if (p.reint) { avisos.push(`${quien}: ya se reintegró a pendientes; no se modifica.`); reintegrados++; return }
+    if (!montoOk) {
       avisos.push(`${quien}: el banco informa ${money(f.monto)} y la nómina dice ${money(p.monto)}. No se toca.`);
       return;
     }
@@ -127,7 +132,7 @@ export function conciliar(rep, n) {
   porRut.forEach((f, rut) => {
     if (!vistos.has(rut)) avisos.push(`${fmtRut(rut)} ${f.nombre}: viene en el archivo pero no es un pago de esta nómina.`);
   });
-  return { cambios, iguales, avisos };
+  return { cambios, iguales, avisos, detalle, reintegrados };
 }
 
 // Lee el .xlsx tal como lo descarga BancoEstado (hoja "DetalleNomina").
