@@ -393,8 +393,11 @@ ok("reporte de pagos filtrado por proveedor o beneficiario (RUT o nombre)", () =
   const ahora = new Date(2026, 9, 13, 14, 5, 9); // 13/10/2026 14:05:09, hora local
   const prov = { num: 21, estado: "cargada", fuente: "GENERAL", operacion: "900500", fechaPago: "2026-10-13", total: 360000,
     pagos: [
-      { rut: "111111111", nombre: "COMERCIAL UNO LIMITADA", banco: "037", forma: "01", cuenta: "1", monto: 250000, estado: "pagado", motivo: "", docs: [{ ndoc: "101", tipo: "33", fecha: "31082026", monto: 200000 }, { ndoc: "102", tipo: "34", fecha: "01092026", monto: 50000 }] },
-      { rut: "222222222", nombre: "SERVICIOS DOS SPA", banco: "012", forma: "01", cuenta: "2", monto: 110000, estado: "rechazado", motivo: "CUENTA CERRADA", docs: [{ ndoc: "7", tipo: "61", fecha: "02092026", monto: 110000 }] }] };
+      { rut: "111111111", nombre: "COMERCIAL UNO LIMITADA", banco: "037", cuenta: "1", monto: 250000, estado: "pagado", motivo: "", docs: [{ ndoc: "101", tipo: "33", fecha: "31082026", monto: 200000 }, { ndoc: "102", tipo: "34", fecha: "01092026", monto: 50000 }] },
+      { rut: "222222222", nombre: "SERVICIOS DOS SPA", banco: "012", cuenta: "2", monto: 110000, estado: "rechazado", motivo: "CUENTA CERRADA", docs: [{ ndoc: "7", tipo: "61", fecha: "02092026", monto: 110000 }] }],
+    // El pago de proveedores no guarda la forma: sale de la línea 1 del archivo que se subió.
+    lineas: [{ tipo: 1, f: ["1", "111111111", "COMERCIAL UNO LIMITADA", "", "037", "01", "1", "64", "250000"] }, { tipo: 2, f: [] },
+      { tipo: 1, f: ["1", "222222222", "SERVICIOS DOS SPA", "", "012", "22", "2", "64", "110000"] }] };
   const rem = { num: 22, tipo: "abonos", concepto: "FONDOS FIJOS", estado: "cargada", fuente: "SEP", operacion: "900501", fechaPago: "2026-10-13", total: 30000,
     pagos: [
       { rut: "333333333", nombre: "PERSONA TRES EJEMPLO", banco: "012", forma: "30", cuenta: "33333333", monto: 10000, estado: "pagado", motivo: "", docs: [{ monto: 10000 }] },
@@ -419,13 +422,13 @@ ok("reporte de pagos filtrado por proveedor o beneficiario (RUT o nombre)", () =
     assert.deepEqual(f.slice(5, 9), [
       ["Convenio", "SLEP EJEMPLO PROVEEDORES(PROV-000)\t", "Nº Nómina", 900500],
       ["Nombre Nómina", "P02_EJEMPLO_GENERAL", "Monto Total $", "$360.000"],
-      ["Cantidad Pagos", "2", "Fecha Pago", "13/10/2026"],
+      ["Cantidad Pagos", "3", "Fecha Pago", "13/10/2026"], // cada documento cuenta como un pago
       ["Concepto Pago", "Proveedores", "Estado Nómina Pagos", "Aceptada Parcial"]]);
     assert.deepEqual(f[10], ["Rut", "Nombre", "Centro Negocio", "Tipo Abono", "Banco", "Monto Total $", "Estado", "Motivo", "N° Documento", "Tipo Documento", "Fecha Emisión", "Monto $"]);
     assert.deepEqual(f.slice(11), [
-      ["11.111.111-1", "COMERCIAL UNO LIMITADA  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCO SANTANDER-CHILE", "$ 250.000", "Pagado", " ".repeat(20), 101, "FACTURA ELECTRONICA", "31/08/2026", "$ 200.000"],
-      ["11.111.111-1", "COMERCIAL UNO LIMITADA  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCO SANTANDER-CHILE", "$ 250.000", "Pagado", " ".repeat(20), 102, "FACTURA EXENTA ELECTRONICA", "01/09/2026", "$ 50.000"],
-      ["22.222.222-2", "SERVICIOS DOS SPA  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCOESTADO", "$ 110.000", "Rechazado", "CUENTA CERRADA", 7, "NOTA DE CREDITO ELECTRONICA", "02/09/2026", "$ 110.000"]]);
+      ["11.111.111-1", "COMERCIAL UNO LIMITADA  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCO SANTANDER-CHILE", "$ 200.000", "Pagado", " ".repeat(20), 101, "FACTURA ELECTRONICA", "31/08/2026", "$ 200.000"],
+      ["11.111.111-1", "COMERCIAL UNO LIMITADA  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCO SANTANDER-CHILE", "$ 50.000", "Pagado", " ".repeat(20), 102, "FACTURA EXENTA ELECTRONICA", "01/09/2026", "$ 50.000"],
+      ["22.222.222-2", "SERVICIOS DOS SPA  ", "", "Abono en Chequera Electrónica / Cuenta Vista", "BANCOESTADO", "$ 110.000", "Rechazado", "CUENTA CERRADA", 7, "NOTA DE CREDITO ELECTRONICA", "02/09/2026", "$ 110.000"]]);
     // Estructura como la del banco: combinadas, estilos y ancho = texto más largo + 2.
     assert.match(p.hoja, /<mergeCells count="2"><mergeCell ref="A1:D2"\/><mergeCell ref="A5:D5"\/><\/mergeCells>/);
     assert.match(p.hoja, /<dimension ref="A1:L14"\/>/);

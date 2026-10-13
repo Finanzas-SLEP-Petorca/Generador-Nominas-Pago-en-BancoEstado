@@ -86,6 +86,17 @@ prueba("formato por documento: varias filas del mismo RUT son un solo pago", () 
   assert.deepEqual(c.avisos, []);
 });
 
+prueba("por documento como lo descarga el banco: cada documento es un pago con su propio monto", () => {
+  const filas = [...cabecera("900001", "P02_EJEMPLO_GENERAL", "$3.000", 3, "Aceptada"), H_DOC,
+    docFila(R1, "PROVEEDOR UNO", "$ 1.000", "Pagado", "", "201", "$ 1.000"),
+    docFila(R2, "PROVEEDOR DOS", "$ 800", "Pagado", "", "349", "$ 800"),
+    docFila(R2, "PROVEEDOR DOS", "$ 1.200", "Pagado", "", "351", "$ 1.200")];
+  const n = nomina(); n.pagos[1].docs = [{ ndoc: "349" }, { ndoc: "351" }]; n.pagos[0].docs = [{ ndoc: "201" }];
+  const c = conciliar(leerReporteBanco(filas), n);
+  assert.deepEqual(c.cambios.map(x => [x.rut, x.monto, x.estado]), [[n1, 1000, "pagado"], [n2, 2000, "pagado"]]);
+  assert.deepEqual(c.avisos, []);
+});
+
 prueba("un archivo que no es del banco se rechaza", () => {
   const r = leerReporteBanco([["cualquier cosa"], ["otra fila"]]);
   assert.equal(r.ok, false);

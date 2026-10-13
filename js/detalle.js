@@ -70,6 +70,10 @@ export function fechaEncabezado(d) {
   return `${MESES[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}, ${h % 12 || 12}:${dd(d.getMinutes())}:${dd(d.getSeconds())} ${h < 12 ? "AM" : "PM"}`;
 }
 
+// Forma de pago con que se subió: el pago de proveedores no la guarda, pero sí
+// la línea 1 del archivo (["1", rut, nombre, email, banco, forma, cuenta, …]).
+const formaPago = (n, p) => S(p.forma) || S(((n.lineas || []).find(l => +l.tipo === 1 && l.f && l.f[1] === p.rut && S(l.f[6]) === S(p.cuenta)) || { f: [] }).f[5]);
+
 // Filas del detalle: cada celda es texto, número o null (celda vacía con estilo).
 // meta: { convenio, nombreBanco, ahora: Date }.
 export function filasDetalle(n, { convenio = "", nombreBanco = "", ahora = new Date() } = {}, catalogoBancos = {}) {
@@ -82,7 +86,8 @@ export function filasDetalle(n, { convenio = "", nombreBanco = "", ahora = new D
       FORMAS_SIN_CUENTA.has(p.forma) ? "" : S(p.cuenta), estadoBanco(n, p), motivoBanco(p), pesos(p.monto)]));
   } else {
     filas.push(["Rut", "Nombre", "Centro Negocio", "Tipo Abono", "Banco", "Monto Total $", "Estado", "Motivo", "N° Documento", "Tipo Documento", "Fecha Emisión", "Monto $"]);
-    n.pagos.forEach(p => p.docs.forEach(d => filas.push([fmtRut(p.rut), S(p.nombre) + "  ", "", formaDetalle(p.forma), bancoDetalle(p.banco, catalogoBancos), pesos(p.monto), estadoBanco(n, p), motivoBanco(p),
+    // El banco cuenta cada documento como un pago: "Monto Total $" es el del documento.
+    n.pagos.forEach(p => p.docs.forEach(d => filas.push([fmtRut(p.rut), S(p.nombre) + "  ", "", formaDetalle(formaPago(n, p)), bancoDetalle(p.banco, catalogoBancos), pesos(d.monto), estadoBanco(n, p), motivoBanco(p),
       /^\d{1,15}$/.test(S(d.ndoc)) ? Number(d.ndoc) : S(d.ndoc), tipoDocDetalle(d.tipo), fechaDoc(d.fecha), pesos(d.monto)])));
   }
   const datos = filas.slice(1);
@@ -94,7 +99,7 @@ export function filasDetalle(n, { convenio = "", nombreBanco = "", ahora = new D
     cabecera: [
       ["Convenio", S(convenio) + "\t", "Nº Nómina", /^\d+$/.test(S(n.operacion)) ? Number(n.operacion) : S(n.operacion)],
       ["Nombre Nómina", S(nombreBanco), "Monto Total $", pesosTotal(n.total)],
-      ["Cantidad Pagos", String(n.pagos.length), "Fecha Pago", ddmmaaaa(n.fechaPago || n.fechaCarga)],
+      ["Cantidad Pagos", String(datos.length), "Fecha Pago", ddmmaaaa(n.fechaPago || n.fechaCarga)],
       ["Concepto Pago", conceptoDetalle(n), "Estado Nómina Pagos", estadoNomina],
     ],
     filas, estadoNomina

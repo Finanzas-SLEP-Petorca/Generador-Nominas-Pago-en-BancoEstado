@@ -25,7 +25,7 @@ const conveniosDe = n => {
 };
 const convenioDe = n => S(n.convenioBanco) || S((st.nominas.filter(x => tipoDe(x) === tipoDe(n) && S(x.convenioBanco)).sort((a, b) => b.num - a.num)[0] || {}).convenioBanco);
 const nombresBanco = () => [...new Set(st.nominas.slice().sort((a, b) => b.num - a.num).map(nomBancoDe).filter(Boolean))];
-const nomBancoDe = n => S(n.nombreBanco) || (/^[A-Z0-9]+(_[A-Z0-9]+)+$/.test(S(n.obs)) ? S(n.obs) : "");
+const nomBancoDe = n => S(n.nombreBanco);
 const status = n => nomStatus(n, st.config.feriados);
 const creada = n => { const d = aFecha(n.creadaAt); return d ? fmtISO(isoLocal(d)) : "" };
 // Nombre corto bajo la fecha en la tabla (el correo completo queda en el título).

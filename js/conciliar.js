@@ -6,7 +6,8 @@
 // fila de encabezados y no por la posición de las columnas:
 //   · Proveedores, "Ver Nómina"     → una fila por pago
 //   · Remuneraciones, "Ver Nómina"  → una fila por pago, columnas en otro orden
-//   · Proveedores, "Ver Documentos" → una fila por documento (se agrupan por RUT)
+//   · Proveedores, "Ver Documentos" → una fila por documento (se agrupan por RUT;
+//     el banco cuenta cada documento como un pago y su "Monto Total $" es el del documento)
 
 import { S, normRut, fmtRut, parseMonto, money, tipoDe } from "./formato.js";
 
@@ -83,7 +84,9 @@ export function conciliar(rep, n) {
   if (n.estado !== "cargada") return { error: `La nómina N° ${n.num} no está cargada en el banco; primero regístrala como cargada.` };
 
   const cambios = [], iguales = [], avisos = [];
-  if (rep.cantidadPagos && rep.cantidadPagos !== n.pagos.length)
+  // Por documento el banco cuenta cada documento como un pago.
+  const nDocs = n.pagos.reduce((a, p) => a + ((p.docs || []).length || 1), 0);
+  if (rep.cantidadPagos && rep.cantidadPagos !== n.pagos.length && !(rep.porDocumento && rep.cantidadPagos === nDocs))
     avisos.push(`El banco informa ${rep.cantidadPagos} pago${rep.cantidadPagos > 1 ? "s" : ""} y la nómina tiene ${n.pagos.length}.`);
   if (rep.montoTotal && rep.montoTotal !== n.total)
     avisos.push(`El total del banco (${money(rep.montoTotal)}) no cuadra con el de la nómina (${money(n.total)}).`);
@@ -92,8 +95,11 @@ export function conciliar(rep, n) {
   const porRut = new Map();
   rep.pagos.forEach(f => {
     const a = porRut.get(f.rut);
-    if (!a) porRut.set(f.rut, { ...f });
-    else if (llave(a.estado) !== llave(f.estado) || S(a.motivo) !== S(f.motivo)) a.conflicto = true;
+    if (!a) porRut.set(f.rut, { ...f, suma: f.monto });
+    else {
+      a.suma += f.monto;
+      if (llave(a.estado) !== llave(f.estado) || S(a.motivo) !== S(f.motivo)) a.conflicto = true;
+    }
   });
 
   const vistos = new Set();
@@ -105,7 +111,8 @@ export function conciliar(rep, n) {
     if (f.conflicto) { avisos.push(`${quien}: el archivo trae más de un resultado para el mismo RUT; regístralo a mano.`); return }
     // Un pago ya reintegrado a pendientes no se vuelve a tocar.
     if (p.reint) { avisos.push(`${quien}: ya se reintegró a pendientes; no se modifica.`); return }
-    if (!isNaN(f.monto) && f.monto !== p.monto) {
+    // Por documento, "Monto Total $" es el de cada documento: el pago es la suma.
+    if (!isNaN(f.monto) && f.monto !== p.monto && f.suma !== p.monto) {
       avisos.push(`${quien}: el banco informa ${money(f.monto)} y la nómina dice ${money(p.monto)}. No se toca.`);
       return;
     }
