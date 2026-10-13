@@ -1,8 +1,9 @@
 // Paso 4: bitácora de nóminas, resultado del banco e historial.
 
-import { M_TIPO, EST_PAGO } from "../catalogos.js";
+import { M_TIPO, EST_PAGO, M_BANCO } from "../catalogos.js";
 import { S, normRut, fmtRut, money, fmtFecha, fmtISO, isoLocal, todayISO, resultadoDesde, fmtDue, diaHabilSiguiente, esHabil, nombreDe, nomStatus, nombreNomina, toTxt, today, reportePagos, reporteHojas, reporteNominaHojas, nombreReporteNomina, esCobroCaja, porCobrar, noCobrado, tipoDe, TIPOS_REGISTRO, conDocumentos, conAbonos } from "../formato.js";
-import { bankWorkbook, abonosWorkbook, libroReporte } from "../excel.js";
+import { bankWorkbook, abonosWorkbook, libroReporte, libroDetalle } from "../excel.js";
+import { filasDetalle, partesDetalle, nombreDetalle, puedeDetalle } from "../detalle.js";
 import { pdfReporte, pdfNomina, cargarPdf } from "../pdf.js";
 import { M_FORMA_ABONO } from "../catalogos.js";
 import { st, aFecha, suscribirHistorial, cargarNomina, guardarCarga, deshacerCarga, resultadoPago, pagarPendientes, cobroPago, volverPendientes, anularNomina, editarTransferencia, aplicarResultadosBanco, exportarRespaldo } from "../datos.js";
@@ -15,6 +16,11 @@ let conc = null;   // lectura del reporte del banco pendiente de aplicar
 let histNom = { id: null, lista: [], baja: null };
 
 const esAbonos = n => n.tipo === "abonos";
+// Convenio y nombre en BancoEstado de una nómina: los guardados, o el convenio de la
+// última nómina del mismo tipo, o el nombre si se anotó como observación (P02_…).
+const conveniosDe = n => [...new Set(st.nominas.filter(x => tipoDe(x) === tipoDe(n) && S(x.convenioBanco)).sort((a, b) => b.num - a.num).map(x => S(x.convenioBanco)))];
+const convenioDe = n => S(n.convenioBanco) || conveniosDe(n)[0] || "";
+const nomBancoDe = n => S(n.nombreBanco) || (/^[A-Z0-9]+(_[A-Z0-9]+)+$/.test(S(n.obs)) ? S(n.obs) : "");
 const status = n => nomStatus(n, st.config.feriados);
 const creada = n => { const d = aFecha(n.creadaAt); return d ? fmtISO(isoLocal(d)) : "" };
 // Nombre corto bajo la fecha en la tabla (el correo completo queda en el título).
@@ -266,7 +272,7 @@ function renderConciliacion() {
     const porNomina = new Map();
     res.forEach(r => {
       if (r.error || !r.cambios || !r.cambios.length) return;
-      const e = porNomina.get(r.nomina.id) || { n: r.nomina, archivos: [], resultados: new Map() };
+      const e = porNomina.get(r.nomina.id) || { n: r.nomina, archivos: [], resultados: new Map(), meta: { convenio: r.rep && r.rep.convenio, nombreNomina: r.rep && r.rep.nombreNomina } };
       e.archivos.push(r.archivo);
       r.cambios.forEach(c => e.resultados.set(c.rut + "|" + c.monto, { rut: c.rut, monto: c.monto, estado: c.estado, motivo: c.motivo }));
       porNomina.set(r.nomina.id, e);
@@ -274,7 +280,7 @@ function renderConciliacion() {
     let aplicados = 0; const problemas = [];
     for (const e of porNomina.values()) {
       try {
-        const out = await aplicarResultadosBanco(e.n.id, [...e.resultados.values()], e.archivos.join(", "));
+        const out = await aplicarResultadosBanco(e.n.id, [...e.resultados.values()], e.archivos.join(", "), e.meta);
         aplicados += (out && out.aplicados) || 0;
         (out && out.omitidos || []).forEach(o => problemas.push(`N° ${e.n.num}: ${o}`));
       } catch (err) { problemas.push(`N° ${e.n.num}: ${mensajeError(err)}`); }
@@ -311,6 +317,9 @@ function renderNomDetail() {
     <label title="Día en que el banco paga la nómina. Queda registrada aunque después haya pagos rechazados.">Fecha de pago de la nómina<input type="date" id="nFechaPago" value="${n.fechaPago || diaHabilSiguiente(n.fechaCarga || todayISO(), st.config.feriados)}" ${anul ? "disabled" : ""}></label>
     <label title="El número que BancoEstado asigna a la nómina al cargarla. Sirve para buscarla después en el banco.">N° de nómina BancoEstado<input id="nOper" value="${esc(n.operacion)}" inputmode="numeric" placeholder="Ej. 1234567" ${anul ? "disabled" : ""}></label>
     <label class="wide">Observación<input id="nObs" value="${esc(n.obs)}" ${anul ? "disabled" : ""}></label>
+    ${cargada ? `<label title="El nombre con que se subió la nómina en BancoEstado (Nombre Nómina en el Detalle del banco). Se completa solo al cargar el reporte del banco.">Nombre de la nómina en BancoEstado<input id="nNomBanco" value="${esc(nomBancoDe(n))}" placeholder="Ej. P02_PROVEEDORES_GENERAL" autocomplete="off"></label>
+    <label class="wide" title="Como aparece en “Convenio” en el Detalle de Nómina del banco. Se completa solo al cargar el reporte del banco, o con el de la última nómina del mismo tipo.">Convenio BancoEstado<input id="nConvenio" list="nConvenios" value="${esc(convenioDe(n))}" placeholder="Como aparece en el Detalle de Nómina del banco" autocomplete="off"></label>
+    <datalist id="nConvenios">${conveniosDe(n).map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist>` : ""}
   </div>
   ${due ? `<p class="hint" style="margin-top:8px">Resultado del banco disponible desde el ${fmtDue(due)} (${n.fechaPago ? "14:00 del día de pago de la nómina; si cae en día no hábil, del hábil siguiente" : "día hábil siguiente a la carga"}; considera los feriados de Configuración).</p>` : ""}
   <div class="row">
@@ -319,6 +328,7 @@ function renderNomDetail() {
     ${cargada && pend ? `<button class="btn primary" id="nPagarRest">Marcar ${pend} pendiente${pend > 1 ? "s" : ""} como pagado${pend > 1 ? "s" : ""}</button>` : ""}
     <button class="btn" id="nTxt">Descargar .txt</button>
     <button class="btn" id="nXlsx">Descargar Excel BancoEstado</button>
+    ${cargada ? `<button class="btn" id="nDetalleBanco" ${puedeDetalle(n).ok ? "" : "disabled"} title="${esc(puedeDetalle(n).ok ? "El Detalle de Nómina en el formato que emite BancoEstado al terminar el proceso (14:00 del día de pago), con el resultado de cada pago" : puedeDetalle(n).motivo + ": el Detalle de Nómina se emite con la nómina completamente procesada")}">Detalle Nómina BancoEstado (Excel)</button>` : ""}
     ${cargada ? botonesReporte : ""}
     ${n.estado === "generada" ? `<button class="btn danger" id="nAnular">Anular nómina</button>` : ""}
     ${cargada && n.pagos.every(p => p.estado === "pendiente") ? `<button class="btn small" id="nDescargar" title="Vuelve al estado generada">Deshacer carga</button>` : ""}
@@ -366,7 +376,19 @@ function renderNomDetail() {
   <ul class="trace" id="nHist">${htmlHistorial(histNom.lista)}</ul>`;
   const q = id => box.querySelector("#" + id);
   q("nCerrar").onclick = () => { const id = openNom; openNom = null; renderBit(); const tr = $("tbBit").querySelector(`tr[data-id="${CSS.escape(id)}"]`); if (tr) tr.scrollIntoView({ behavior: "smooth", block: "center" }) };
-  const datosCarga = () => ({ fechaCarga: q("nFecha").value, fechaPago: q("nFechaPago").value, operacion: S(q("nOper").value), obs: S(q("nObs").value) });
+  const datosCarga = () => ({ fechaCarga: q("nFecha").value, fechaPago: q("nFechaPago").value, operacion: S(q("nOper").value), obs: S(q("nObs").value),
+    ...(q("nNomBanco") ? { nombreBanco: S(q("nNomBanco").value), convenioBanco: S(q("nConvenio").value) } : {}) });
+  // Detalle de Nómina en el formato del banco: requiere convenio y nombre; si cambiaron, se guardan para la próxima vez.
+  if (q("nDetalleBanco")) q("nDetalleBanco").onclick = () => accion(q("nDetalleBanco"), async () => {
+    const d = datosCarga();
+    if (!d.convenioBanco) { toast("Escribe el convenio BancoEstado como aparece en el Detalle de Nómina del banco (ej. el de una nómina anterior)"); q("nConvenio").focus(); return }
+    if (!d.nombreBanco) { toast("Escribe el nombre con que se subió la nómina en BancoEstado"); q("nNomBanco").focus(); return }
+    try {
+      if (d.convenioBanco !== S(n.convenioBanco) || d.nombreBanco !== S(n.nombreBanco)) await guardarCarga(n.id, { nombreBanco: d.nombreBanco, convenioBanco: d.convenioBanco });
+      const ahora = new Date(), det = filasDetalle(n, { convenio: d.convenioBanco, nombreBanco: d.nombreBanco, ahora }, M_BANCO);
+      descargar(nombreDetalle(n, ahora), await libroDetalle(partesDetalle(det, ahora)));
+    } catch (e) { toast("No se pudo armar el Detalle de Nómina: " + mensajeError(e)) }
+  });
   // Mientras no se haya guardado ni tocado, la fecha de pago sigue al día hábil siguiente a la carga.
   let pagoTocado = !!n.fechaPago;
   if (q("nFechaPago")) q("nFechaPago").addEventListener("input", () => { pagoTocado = true });

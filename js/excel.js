@@ -3,6 +3,8 @@
 // el resto del archivo (logo, colores, comentarios, hojas de apoyo) no cambia.
 // Usa JSZip (global, vendor/jszip-3.10.1.min.js).
 
+import { ORDEN_PARTES } from "./detalle.js";
+
 const MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const cache = {};
 async function plantilla(ruta) {
@@ -91,4 +93,15 @@ export function libroReporte(hojas) {
     XLSX.utils.book_append_sheet(wb, ws, h.nombre);
   });
   return new Uint8Array(XLSX.write(wb, { type: "array", bookType: "xlsx" }));
+}
+
+// Detalle de Nómina en el formato que emite BancoEstado al terminar el proceso
+// (js/detalle.js arma la hoja; las partes fijas salen de la plantilla).
+// partes: resultado de partesDetalle. Van en el mismo orden que en el archivo del banco.
+export async function libroDetalle(partes) {
+  const base = await plantilla("assets/plantilla_detalle_nomina.xlsx");
+  const variables = { "xl/worksheets/sheet1.xml": partes.hoja, "xl/sharedStrings.xml": partes.sst, "docProps/core.xml": partes.core };
+  const zip = new JSZip();
+  for (const p of ORDEN_PARTES) zip.file(p, variables[p] ?? await base.file(p).async("uint8array"));
+  return zip.generateAsync({ type: "uint8array", compression: "DEFLATE", mimeType: MIME_XLSX });
 }

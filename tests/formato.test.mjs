@@ -386,6 +386,79 @@ ok("reporte de pagos filtrado por proveedor o beneficiario (RUT o nombre)", () =
   assert.equal(F.reportePagos(noms, {}).tot.pagado, 700); // sin filtro, como antes
 });
 
+// Detalle de Nómina en el formato que emite BancoEstado (con datos inventados).
+{
+  const Dt = await import(path.join(raiz, "js/detalle.js"));
+  const Cc = await import(path.join(raiz, "js/conciliar.js"));
+  const ahora = new Date(2026, 9, 13, 14, 5, 9); // 13/10/2026 14:05:09, hora local
+  const prov = { num: 21, estado: "cargada", fuente: "GENERAL", operacion: "900500", fechaPago: "2026-10-13", total: 360000,
+    pagos: [
+      { rut: "111111111", nombre: "COMERCIAL UNO LIMITADA", banco: "037", forma: "01", cuenta: "1", monto: 250000, estado: "pagado", motivo: "", docs: [{ ndoc: "101", tipo: "33", fecha: "31082026", monto: 200000 }, { ndoc: "102", tipo: "34", fecha: "01092026", monto: 50000 }] },
+      { rut: "222222222", nombre: "SERVICIOS DOS SPA", banco: "012", forma: "01", cuenta: "2", monto: 110000, estado: "rechazado", motivo: "CUENTA CERRADA", docs: [{ ndoc: "7", tipo: "61", fecha: "02092026", monto: 110000 }] }] };
+  const rem = { num: 22, tipo: "abonos", concepto: "FONDOS FIJOS", estado: "cargada", fuente: "SEP", operacion: "900501", fechaPago: "2026-10-13", total: 30000,
+    pagos: [
+      { rut: "333333333", nombre: "PERSONA TRES EJEMPLO", banco: "012", forma: "30", cuenta: "33333333", monto: 10000, estado: "pagado", motivo: "", docs: [{ monto: 10000 }] },
+      { rut: "111111111", nombre: "PERSONA UNO EJEMPLO", banco: "012", forma: "29", cuenta: "", monto: 20000, estado: "pagado", motivo: "", docs: [{ monto: 20000 }] }] };
+  const leer = partes => {
+    const ss = [...partes.sst.matchAll(/<si><t[^>]*>([\s\S]*?)<\/t><\/si>/g)].map(m => m[1].replace(/&amp;/g, "&"));
+    const filas = [];
+    for (const m of partes.hoja.matchAll(/<c r="([A-Z])(\d+)"[^>]*?(t="s")?>(?:<v>([^<]*)<\/v>)?<\/c>/g)) {
+      const r = +m[2] - 1, c = m[1].charCodeAt(0) - 65;
+      (filas[r] = filas[r] || [])[c] = m[3] ? ss[+m[4]] : Number(m[4]);
+    }
+    return Array.from(filas, f => Array.from(f || [], v => v ?? ""));
+  };
+  ok("Detalle de Nómina de proveedores en el formato del banco: celdas, tipos, anchos y textos compartidos", () => {
+    assert.equal(Dt.puedeDetalle(prov).ok, true);
+    assert.match(Dt.puedeDetalle({ ...prov, pagos: [{ ...prov.pagos[0], estado: "pendiente" }] }).motivo, /Falta el resultado de 1 pago/);
+    assert.equal(Dt.puedeDetalle({ ...prov, tipo: "transferencia" }).ok, false);
+    const det = Dt.filasDetalle(prov, { convenio: "SLEP EJEMPLO PROVEEDORES(PROV-000)", nombreBanco: "P02_EJEMPLO_GENERAL", ahora }, {});
+    const p = Dt.partesDetalle(det, ahora), f = leer(p);
+    assert.deepEqual(f[0][0], "Mis Nóminas - Ver Nómina - Ver Documentos");
+    assert.equal(f[2][0], "Fecha : Oct 13, 2026, 2:05:09 PM");
+    assert.deepEqual(f.slice(5, 9), [
+      ["Convenio", "SLEP EJEMPLO PROVEEDORES(PROV-000)\t", "Nº Nómina", 900500],
+      ["Nombre Nómina", "P02_EJEMPLO_GENERAL", "Monto Total $", "$360.000"],
+      ["Cantidad Pagos", "2", "Fecha Pago", "13/10/2026"],
+      ["Concepto Pago", "Proveedores", "Estado Nómina Pagos", "Aceptada Parcial"]]);
+    assert.deepEqual(f[10], ["Rut", "Nombre", "Centro Negocio", "Tipo Abono", "Banco", "Monto Total $", "Estado", "Motivo", "N° Documento", "Tipo Documento", "Fecha Emisión", "Monto $"]);
+    assert.deepEqual(f.slice(11), [
+      ["11.111.111-1", "COMERCIAL UNO LIMITADA  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCO SANTANDER-CHILE", "$ 250.000", "Pagado", " ".repeat(20), 101, "FACTURA ELECTRONICA", "31/08/2026", "$ 200.000"],
+      ["11.111.111-1", "COMERCIAL UNO LIMITADA  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCO SANTANDER-CHILE", "$ 250.000", "Pagado", " ".repeat(20), 102, "FACTURA NO AFECTA O EXENTA ELECTRONICA", "01/09/2026", "$ 50.000"],
+      ["22.222.222-2", "SERVICIOS DOS SPA  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCOESTADO", "$ 110.000", "Rechazado", "CUENTA CERRADA", 7, "NOTA DE CREDITO ELECTRONICA", "02/09/2026", "$ 110.000"]]);
+    // Estructura como la del banco: combinadas, estilos y ancho = texto más largo + 2.
+    assert.match(p.hoja, /<mergeCells count="2"><mergeCell ref="A1:D2"\/><mergeCell ref="A5:D5"\/><\/mergeCells>/);
+    assert.match(p.hoja, /<dimension ref="A1:L14"\/>/);
+    assert.match(p.hoja, /<row r="1" spans="1:4" s="1" customFormat="1" x14ac:dyDescent="0.25"><c r="A1" s="1" t="s"><v>0<\/v><\/c><c r="B1" s="1"\/>/);
+    assert.match(p.hoja, /<c r="D6" s="4"><v>900500<\/v><\/c>/);
+    assert.match(p.hoja, /<col min="10" max="10" width="40" customWidth="1"\/>/); // "FACTURA NO AFECTA O EXENTA ELECTRONICA"
+    assert.match(p.hoja, /<col min="8" max="8" width="22" customWidth="1"\/>/); // 20 espacios
+    assert.match(p.sst, /^<\?xml version="1.0" encoding="UTF-8" standalone="yes"\?>\n<sst [^>]* count="\d+" uniqueCount="\d+">/);
+    assert.match(p.sst, /<si><t xml:space="preserve">SLEP EJEMPLO PROVEEDORES\(PROV-000\)\t<\/t><\/si>/);
+    assert.match(p.core, /<dcterms:created xsi:type="dcterms:W3CDTF">\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ<\/dcterms:created>/);
+    assert.equal(Dt.nombreDetalle(prov, ahora), "Detalle_Nomina_N__900500_202610131405.xlsx");
+    // El lector de "Cargar reporte del banco" lo entiende como un archivo del banco.
+    const lr = Cc.leerReporteBanco(f);
+    assert.equal(lr.ok, true); assert.equal(lr.operacion, "900500"); assert.equal(lr.porDocumento, true);
+    assert.equal(lr.convenio, "SLEP EJEMPLO PROVEEDORES(PROV-000)"); assert.equal(lr.nombreNomina, "P02_EJEMPLO_GENERAL");
+  });
+  ok("Detalle de Nómina de remuneraciones en el formato del banco: CuentaRUT, pago cash y concepto Anticipos", () => {
+    const det = Dt.filasDetalle(rem, { convenio: "SLEP EJEMPLO REMUNERACIONES(REM-000)", nombreBanco: "P02_FONDO_FIJO_SEP", ahora }, {});
+    const p = Dt.partesDetalle(det, ahora), f = leer(p);
+    assert.equal(f[0][0], "Mis Nóminas - Remuneraciones - Ver Nómina");
+    assert.deepEqual(f[8], ["Concepto Pago", "Anticipos", "Estado Nómina Pagos", "Aceptada Parcial"]); // el pago cash queda por cobrar
+    assert.deepEqual(f[10], ["Rut", "Nombre", "Fecha Abono", "Forma Abono", "Banco", "Código Propio", "N° Cuenta", "Estado Abono", "Motivo", "Monto Abono"]);
+    assert.deepEqual(f.slice(11), [
+      ["33.333.333-3", "PERSONA TRES EJEMPLO  ", "13/10/2026", "Abono en CuentaRUT", "BANCOESTADO", "", "33333333", "Pagado", " ".repeat(20), "$ 10.000"],
+      ["11.111.111-1", "PERSONA UNO EJEMPLO  ", "13/10/2026", "Pago Cash", "BANCOESTADO", "", "", "Pendiente de Cobro", " ".repeat(20), "$ 20.000"]]);
+    assert.match(p.hoja, /<col min="3" max="3" width="13" customWidth="1"\/>/);
+    const todoPagado = Dt.filasDetalle({ ...rem, concepto: "HONORARIOS", pagos: [rem.pagos[0]] }, { ahora }, {});
+    assert.deepEqual(todoPagado.cabecera[3].slice(1), ["Remuneraciones / Pensiones", "Estado Nómina Pagos", "Aceptada"]);
+    const lr = Cc.leerReporteBanco(f);
+    assert.deepEqual(lr.pagos.map(x => [x.rut, x.monto, Cc.traducirEstado(x.estado)]), [["333333333", 10000, { estado: "pagado" }], ["111111111", 20000, { estado: "pagado", cobro: "" }]]);
+  });
+}
+
 // Reporte en PDF: mismo contenido que el Excel (se revisa el texto de las páginas).
 {
   const { jsPDF } = require(path.join(raiz, "vendor/jspdf-4.2.1.umd.min.js"));

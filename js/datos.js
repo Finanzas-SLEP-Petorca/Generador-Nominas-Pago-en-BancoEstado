@@ -399,10 +399,11 @@ export const cargarNomina = (id, datosCarga) => modificarNomina(id, n => {
 });
 export const guardarCarga = (id, datosCarga) => modificarNomina(id, n => {
   if (n.estado !== "cargada") throw new Conflicto(`La nómina N° ${n.num} no está cargada`);
-  const antes = { fechaCarga: n.fechaCarga, fechaPago: n.fechaPago || "", operacion: n.operacion, obs: n.obs };
-  const cambiados = Object.keys(antes).filter(k => S(antes[k]) !== S(datosCarga[k]));
+  // Nombre y convenio en BancoEstado: para emitir el Detalle de Nómina en el formato del banco.
+  const antes = { fechaCarga: n.fechaCarga, fechaPago: n.fechaPago || "", operacion: n.operacion, obs: n.obs, nombreBanco: n.nombreBanco || "", convenioBanco: n.convenioBanco || "" };
+  const cambiados = Object.keys(antes).filter(k => k in datosCarga && S(antes[k]) !== S(datosCarga[k]));
   if (!cambiados.length) return { cambios: {} };
-  const nombres = { fechaCarga: "fecha de carga", fechaPago: "fecha de pago", operacion: "N° de nómina BancoEstado", obs: "observación" };
+  const nombres = { fechaCarga: "fecha de carga", fechaPago: "fecha de pago", operacion: "N° de nómina BancoEstado", obs: "observación", nombreBanco: "nombre en BancoEstado", convenioBanco: "convenio BancoEstado" };
   return { cambios: datosCarga, hist: [hist("editar datos de carga", refN(n), "Cambia " + cambiados.map(k => nombres[k]).join(", ") + (cambiados.includes("fechaPago") ? `: pago el ${fmtISO(datosCarga.fechaPago)}` : ""), antes, datosCarga)] };
 });
 export const deshacerCarga = id => modificarNomina(id, n => {
@@ -430,7 +431,9 @@ export const pagarPendientes = id => modificarNomina(id, n => {
 // contra la nómina recién leída: entre la vista previa y el botón Aplicar, otra
 // persona pudo registrar un resultado o reintegrar un pago. Lo que ya no calce
 // se omite y se informa; nunca se pisa lo que otro escribió.
-export const aplicarResultadosBanco = (id, resultados, archivo) => modificarNomina(id, n => {
+// meta: { convenio, nombreNomina } del encabezado del archivo; quedan en la nómina
+// para emitir después el Detalle de Nómina en el mismo formato.
+export const aplicarResultadosBanco = (id, resultados, archivo, meta = {}) => modificarNomina(id, n => {
   if (n.estado !== "cargada") throw new Conflicto(`La nómina N° ${n.num} no está cargada`);
   const pagos = n.pagos.map(p => ({ ...p }));
   const hechos = [], omitidos = [];
@@ -447,13 +450,16 @@ export const aplicarResultadosBanco = (id, resultados, archivo) => modificarNomi
     if (r.estado !== "pagado" && (p.cobro || p.cobroFecha)) { p.cobro = ""; p.cobroFecha = "" }
     hechos.push({ p, antes });
   });
-  if (!hechos.length) return { cambios: {}, salida: { aplicados: 0, omitidos } };
+  const datosBanco = {};
+  if (S(meta.convenio) && S(meta.convenio) !== S(n.convenioBanco)) datosBanco.convenioBanco = S(meta.convenio);
+  if (S(meta.nombreNomina) && S(meta.nombreNomina) !== S(n.nombreBanco)) datosBanco.nombreBanco = S(meta.nombreNomina);
+  if (!hechos.length) return { cambios: datosBanco, salida: { aplicados: 0, omitidos } };
   const pgd = hechos.filter(h => h.p.estado === "pagado"), rch = hechos.filter(h => h.p.estado === "rechazado");
   const suma = l => money(l.reduce((s, h) => s + h.p.monto, 0));
   const resumen = [pgd.length ? `${pgd.length} pagado${pgd.length > 1 ? "s" : ""} (${suma(pgd)})` : "",
                    rch.length ? `${rch.length} rechazado${rch.length > 1 ? "s" : ""} (${suma(rch)})` : ""].filter(Boolean).join(", ");
   return {
-    cambios: { pagos }, salida: { aplicados: hechos.length, omitidos },
+    cambios: { pagos, ...datosBanco }, salida: { aplicados: hechos.length, omitidos },
     hist: [
       hist("resultado del banco", refN(n), `Del reporte de BancoEstado${archivo ? ", archivo " + archivo : ""}: ${resumen}`, { archivo: S(archivo) }, { pagos: hechos.length }),
       ...hechos.map(h => hist("resultado de pago", refN(n), `${fmtRut(h.p.rut)} ${h.p.nombre} (${money(h.p.monto)}): ${h.antes.estado} → ${h.p.estado}${h.p.motivo ? ", motivo: " + h.p.motivo : ""} (reporte del banco)`, h.antes, { estado: h.p.estado, motivo: h.p.motivo }))

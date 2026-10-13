@@ -323,6 +323,36 @@ try {
     assert.equal(pdfN.bytes.subarray(0, 5).toString(), "%PDF-");
     log("reporte de pago de la nómina", nRep + ":", xl.nombre, "(" + wb.SheetNames.join(", ") + ") y", pdfN.nombre, pdfN.bytes.length, "bytes");
   }
+  // Detalle de Nómina en el formato del banco (para el otro sistema), desde la nómina procesada.
+  {
+    const nDet = await A.$eval("#hDetail", b => b.dataset.id);
+    await esperar(A, () => document.getElementById("nDetalleBanco") && !document.getElementById("nDetalleBanco").disabled);
+    await A.click("#nDetalleBanco"); // sin convenio: lo pide
+    await esperar(A, () => /convenio BancoEstado/.test(document.getElementById("toast").textContent));
+    await A.fill("#nConvenio", "SLEP EJEMPLO PROVEEDORES(PROV-000)"); await A.fill("#nNomBanco", "P02_EJEMPLO_GENERAL");
+    const det = await descarga(A, () => A.click("#nDetalleBanco"));
+    assert.match(det.nombre, /^Detalle_Nomina_N__\d+_\d{12}\.xlsx$/);
+    const XLSX = createRequire(import.meta.url)(REPO + "/vendor/xlsx-0.18.5.full.min.js");
+    const wb = XLSX.read(det.bytes, { type: "buffer" });
+    assert.deepEqual(wb.SheetNames, ["DetalleNomina"]);
+    const f = XLSX.utils.sheet_to_json(wb.Sheets.DetalleNomina, { header: 1, raw: true, defval: "" });
+    assert.equal(f[0][0], "Mis Nóminas - Ver Nómina - Ver Documentos");
+    assert.deepEqual(f[5].slice(0, 3), ["Convenio", "SLEP EJEMPLO PROVEEDORES(PROV-000)\t", "Nº Nómina"]);
+    assert.equal(typeof f[5][3], "number");
+    assert.equal(f[6][1], "P02_EJEMPLO_GENERAL");
+    assert.equal(f[10][6], "Estado");
+    const estados = [...new Set(f.slice(11).map(x => x[6]))];
+    assert.ok(estados.every(e => ["Pagado", "Rechazado"].includes(e)), "estados: " + estados);
+    // El convenio y el nombre quedan guardados en la nómina para la próxima vez.
+    await esperar(A, id => { const i = document.getElementById("nConvenio"); return document.getElementById("hDetail").dataset.id === id && i && i.value === "SLEP EJEMPLO PROVEEDORES(PROV-000)" }, nDet);
+    const guardado = await A.evaluate(async id => {
+      const fs = await import("https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js");
+      const d = (await fs.getDoc(fs.doc(fs.getFirestore(), "pago_nominas", id))).data();
+      return [d.convenioBanco, d.nombreBanco];
+    }, nDet);
+    assert.deepEqual(guardado, ["SLEP EJEMPLO PROVEEDORES(PROV-000)", "P02_EJEMPLO_GENERAL"]);
+    log("Detalle de Nómina en formato BancoEstado:", det.nombre, "·", f.length - 11, "documentos ·", estados.join(", "), "· convenio y nombre guardados en la nómina");
+  }
   // Pagos a un proveedor: desde su ficha, "Ver pagos" deja el reporte de la bitácora solo con sus pagos, de todas las fechas.
   {
     await A.click('.steps button[data-step="1"]');
