@@ -18,8 +18,13 @@ let histNom = { id: null, lista: [], baja: null };
 const esAbonos = n => n.tipo === "abonos";
 // Convenio y nombre en BancoEstado de una nómina: los guardados, o el convenio de la
 // última nómina del mismo tipo, o el nombre si se anotó como observación (P02_…).
-const conveniosDe = n => [...new Set(st.nominas.filter(x => tipoDe(x) === tipoDe(n) && S(x.convenioBanco)).sort((a, b) => b.num - a.num).map(x => S(x.convenioBanco)))];
-const convenioDe = n => S(n.convenioBanco) || conveniosDe(n)[0] || "";
+// Los convenios ya usados: primero los del mismo tipo de nómina (el más reciente arriba).
+const conveniosDe = n => {
+  const con = st.nominas.filter(x => S(x.convenioBanco)).sort((a, b) => (tipoDe(b) === tipoDe(n)) - (tipoDe(a) === tipoDe(n)) || b.num - a.num);
+  return [...new Set(con.map(x => S(x.convenioBanco)))];
+};
+const convenioDe = n => S(n.convenioBanco) || S((st.nominas.filter(x => tipoDe(x) === tipoDe(n) && S(x.convenioBanco)).sort((a, b) => b.num - a.num)[0] || {}).convenioBanco);
+const nombresBanco = () => [...new Set(st.nominas.slice().sort((a, b) => b.num - a.num).map(nomBancoDe).filter(Boolean))];
 const nomBancoDe = n => S(n.nombreBanco) || (/^[A-Z0-9]+(_[A-Z0-9]+)+$/.test(S(n.obs)) ? S(n.obs) : "");
 const status = n => nomStatus(n, st.config.feriados);
 const creada = n => { const d = aFecha(n.creadaAt); return d ? fmtISO(isoLocal(d)) : "" };
@@ -316,10 +321,12 @@ function renderNomDetail() {
     <label>Fecha de carga en BancoEstado<input type="date" id="nFecha" value="${n.fechaCarga || todayISO()}" ${anul ? "disabled" : ""}></label>
     <label title="Día en que el banco paga la nómina. Queda registrada aunque después haya pagos rechazados.">Fecha de pago de la nómina<input type="date" id="nFechaPago" value="${n.fechaPago || diaHabilSiguiente(n.fechaCarga || todayISO(), st.config.feriados)}" ${anul ? "disabled" : ""}></label>
     <label title="El número que BancoEstado asigna a la nómina al cargarla. Sirve para buscarla después en el banco.">N° de nómina BancoEstado<input id="nOper" value="${esc(n.operacion)}" inputmode="numeric" placeholder="Ej. 1234567" ${anul ? "disabled" : ""}></label>
+    <label title="El nombre que se le pone a la nómina al subirla a BancoEstado (Nombre Nómina en el Detalle del banco), ej. P02_PROVEEDORES_GENERAL.">Nombre de la nómina en BancoEstado<input id="nNomBanco" value="${esc(nomBancoDe(n))}" list="nNombres" placeholder="Ej. P02_PROVEEDORES_GENERAL" autocomplete="off" ${anul ? "disabled" : ""}></label>
+    <datalist id="nNombres">${nombresBanco().map(v => `<option value="${esc(v)}"></option>`).join("")}</datalist>
     <label class="wide">Observación<input id="nObs" value="${esc(n.obs)}" ${anul ? "disabled" : ""}></label>
-    ${cargada ? `<label title="El nombre con que se subió la nómina en BancoEstado (Nombre Nómina en el Detalle del banco). Se completa solo al cargar el reporte del banco.">Nombre de la nómina en BancoEstado<input id="nNomBanco" value="${esc(nomBancoDe(n))}" placeholder="Ej. P02_PROVEEDORES_GENERAL" autocomplete="off"></label>
-    <label class="wide" title="Como aparece en “Convenio” en el Detalle de Nómina del banco. Se completa solo al cargar el reporte del banco, o con el de la última nómina del mismo tipo.">Convenio BancoEstado<input id="nConvenio" list="nConvenios" value="${esc(convenioDe(n))}" placeholder="Como aparece en el Detalle de Nómina del banco" autocomplete="off"></label>
-    <datalist id="nConvenios">${conveniosDe(n).map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist>` : ""}
+    ${cargada ? `<label class="wide" title="Como aparece en “Convenio” en el Detalle de Nómina del banco: uno para proveedores y otro para remuneraciones. Viene elegido el del tipo de nómina.">Convenio BancoEstado
+      <select id="nConvSel">${conveniosDe(n).map(c => `<option value="${esc(c)}"${c === convenioDe(n) ? " selected" : ""}>${esc(c)}</option>`).join("")}<option value="__otro"${convenioDe(n) ? "" : " selected"}>${conveniosDe(n).length ? "Otro… (escribirlo)" : "Escribir el convenio…"}</option></select>
+      <input id="nConvenio" value="${esc(convenioDe(n))}" placeholder="Ej. el que aparece en “Convenio” del Detalle del banco" autocomplete="off" ${convenioDe(n) ? "hidden" : ""} style="margin-top:6px"></label>` : ""}
   </div>
   ${due ? `<p class="hint" style="margin-top:8px">Resultado del banco disponible desde el ${fmtDue(due)} (${n.fechaPago ? "14:00 del día de pago de la nómina; si cae en día no hábil, del hábil siguiente" : "día hábil siguiente a la carga"}; considera los feriados de Configuración).</p>` : ""}
   <div class="row">
@@ -377,11 +384,12 @@ function renderNomDetail() {
   const q = id => box.querySelector("#" + id);
   q("nCerrar").onclick = () => { const id = openNom; openNom = null; renderBit(); const tr = $("tbBit").querySelector(`tr[data-id="${CSS.escape(id)}"]`); if (tr) tr.scrollIntoView({ behavior: "smooth", block: "center" }) };
   const datosCarga = () => ({ fechaCarga: q("nFecha").value, fechaPago: q("nFechaPago").value, operacion: S(q("nOper").value), obs: S(q("nObs").value),
-    ...(q("nNomBanco") ? { nombreBanco: S(q("nNomBanco").value), convenioBanco: S(q("nConvenio").value) } : {}) });
+    ...(q("nNomBanco") ? { nombreBanco: S(q("nNomBanco").value) } : {}), ...(q("nConvenio") ? { convenioBanco: S(q("nConvenio").value) } : {}) });
+  if (q("nConvSel")) q("nConvSel").onchange = () => { const otro = q("nConvSel").value === "__otro"; q("nConvenio").hidden = !otro; q("nConvenio").value = otro ? "" : q("nConvSel").value; if (otro) q("nConvenio").focus() };
   // Detalle de Nómina en el formato del banco: requiere convenio y nombre; si cambiaron, se guardan para la próxima vez.
   if (q("nDetalleBanco")) q("nDetalleBanco").onclick = () => accion(q("nDetalleBanco"), async () => {
     const d = datosCarga();
-    if (!d.convenioBanco) { toast("Escribe el convenio BancoEstado como aparece en el Detalle de Nómina del banco (ej. el de una nómina anterior)"); q("nConvenio").focus(); return }
+    if (!d.convenioBanco) { toast("Elige o escribe el convenio BancoEstado, como aparece en el Detalle de Nómina del banco"); q("nConvenio").hidden = false; q("nConvenio").focus(); return }
     if (!d.nombreBanco) { toast("Escribe el nombre con que se subió la nómina en BancoEstado"); q("nNomBanco").focus(); return }
     try {
       if (d.convenioBanco !== S(n.convenioBanco) || d.nombreBanco !== S(n.nombreBanco)) await guardarCarga(n.id, { nombreBanco: d.nombreBanco, convenioBanco: d.convenioBanco });

@@ -239,6 +239,7 @@ try {
   await esperar(A, () => document.getElementById("toast").textContent.includes("N° de nómina que asignó BancoEstado"));
   assert.ok((await A.textContent("#hDetail .tag")).includes("Generada"));
   await A.fill("#nOper", "7654321");
+  await A.fill("#nNomBanco", "P02_EJEMPLO_GENERAL"); // el nombre con que se subió al banco
   await A.click("#nCargar");
   await esperar(A, () => document.querySelector("#hDetail .tag")?.textContent.includes("Cargada"));
   await esperar(A, () => document.querySelector('#tbBit tr[data-id="1"] td:nth-child(2)').textContent === "7654321");
@@ -329,7 +330,8 @@ try {
     await esperar(A, () => document.getElementById("nDetalleBanco") && !document.getElementById("nDetalleBanco").disabled);
     await A.click("#nDetalleBanco"); // sin convenio: lo pide
     await esperar(A, () => /convenio BancoEstado/.test(document.getElementById("toast").textContent));
-    await A.fill("#nConvenio", "SLEP EJEMPLO PROVEEDORES(PROV-000)"); await A.fill("#nNomBanco", "P02_EJEMPLO_GENERAL");
+    assert.equal(await A.inputValue("#nNomBanco"), "P02_EJEMPLO_GENERAL"); // el que se puso al cargarla
+    await A.fill("#nConvenio", "SLEP EJEMPLO PROVEEDORES(PROV-000)");
     const det = await descarga(A, () => A.click("#nDetalleBanco"));
     assert.match(det.nombre, /^Detalle_Nomina_N__\d+_\d{12}\.xlsx$/);
     const XLSX = createRequire(import.meta.url)(REPO + "/vendor/xlsx-0.18.5.full.min.js");
@@ -351,6 +353,7 @@ try {
       return [d.convenioBanco, d.nombreBanco];
     }, nDet);
     assert.deepEqual(guardado, ["SLEP EJEMPLO PROVEEDORES(PROV-000)", "P02_EJEMPLO_GENERAL"]);
+    assert.equal(await A.inputValue("#nConvSel"), "SLEP EJEMPLO PROVEEDORES(PROV-000)"); // ahora en la lista desplegable
     log("Detalle de Nómina en formato BancoEstado:", det.nombre, "·", f.length - 11, "documentos ·", estados.join(", "), "· convenio y nombre guardados en la nómina");
   }
   // Pagos a un proveedor: desde su ficha, "Ver pagos" deja el reporte de la bitácora solo con sus pagos, de todas las fechas.
@@ -457,7 +460,7 @@ try {
     // Bitácora: filtro por tipo, carga, rechazo y vuelta a pendientes.
     await A.selectOption("#hTipo", "abonos");
     const filas = await A.$$eval("#tbBit tr[data-id]", t => t.length); assert.equal(filas, 1);
-    await A.fill("#nOper", "7654322");
+    await A.fill("#nOper", "7654322"); await A.fill("#nNomBanco", "P02_EJEMPLO_SEP");
     await A.click("#nCargar");
     await esperar(A, () => document.querySelector("#hDetail .tag")?.textContent.includes("Cargada"));
 

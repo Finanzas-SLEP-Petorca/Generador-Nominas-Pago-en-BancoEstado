@@ -395,7 +395,7 @@ const refN = n => "nomina:" + n.num;
 export const cargarNomina = (id, datosCarga) => modificarNomina(id, n => {
   if (n.estado !== "generada") throw new Conflicto(`La nómina N° ${n.num} ya no está en estado generada`);
   // Quién cargó y cuándo: las reglas exigen que cargadaPor sea quien escribe.
-  return { cambios: { estado: "cargada", ...datosCarga, cargadaPor: st.email, cargadaAt: serverTimestamp() }, hist: [hist("cargar nómina", refN(n), `Cargada en BancoEstado el ${fmtISO(datosCarga.fechaCarga)}, fecha de pago ${fmtISO(datosCarga.fechaPago)}${datosCarga.operacion ? ", N° nómina BancoEstado " + datosCarga.operacion : ""}${datosCarga.obs ? ". " + datosCarga.obs : ""}`, { estado: "generada" }, { estado: "cargada", ...datosCarga })] };
+  return { cambios: { estado: "cargada", ...datosCarga, cargadaPor: st.email, cargadaAt: serverTimestamp() }, hist: [hist("cargar nómina", refN(n), `Cargada en BancoEstado el ${fmtISO(datosCarga.fechaCarga)}, fecha de pago ${fmtISO(datosCarga.fechaPago)}${datosCarga.operacion ? ", N° nómina BancoEstado " + datosCarga.operacion : ""}${datosCarga.nombreBanco ? " (" + datosCarga.nombreBanco + ")" : ""}${datosCarga.obs ? ". " + datosCarga.obs : ""}`, { estado: "generada" }, { estado: "cargada", ...datosCarga })] };
 });
 export const guardarCarga = (id, datosCarga) => modificarNomina(id, n => {
   if (n.estado !== "cargada") throw new Conflicto(`La nómina N° ${n.num} no está cargada`);
