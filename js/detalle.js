@@ -77,7 +77,8 @@ export function filasDetalle(n, { convenio = "", nombreBanco = "", ahora = new D
   const filas = [];
   if (abonos) {
     filas.push(["Rut", "Nombre", "Fecha Abono", "Forma Abono", "Banco", "Código Propio", "N° Cuenta", "Estado Abono", "Motivo", "Monto Abono"]);
-    n.pagos.forEach(p => filas.push([fmtRut(p.rut), S(p.nombre) + "  ", ddmmaaaa(n.fechaPago || n.fechaCarga), formaDetalle(p.forma), bancoDetalle(p.banco, catalogoBancos), "",
+    // En esta vista el nombre sale tal como se subió (sin los dos espacios de Ver Documentos).
+    n.pagos.forEach(p => filas.push([fmtRut(p.rut), S(p.nombre), ddmmaaaa(n.fechaPago || n.fechaCarga), formaDetalle(p.forma), bancoDetalle(p.banco, catalogoBancos), "",
       FORMAS_SIN_CUENTA.has(p.forma) ? "" : S(p.cuenta), estadoBanco(n, p), motivoBanco(p), pesos(p.monto)]));
   } else {
     filas.push(["Rut", "Nombre", "Centro Negocio", "Tipo Abono", "Banco", "Monto Total $", "Estado", "Motivo", "N° Documento", "Tipo Documento", "Fecha Emisión", "Monto $"]);

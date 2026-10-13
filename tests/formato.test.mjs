@@ -449,8 +449,8 @@ ok("reporte de pagos filtrado por proveedor o beneficiario (RUT o nombre)", () =
     assert.deepEqual(f[8], ["Concepto Pago", "Anticipos", "Estado Nómina Pagos", "Aceptada Parcial"]); // el pago cash queda por cobrar
     assert.deepEqual(f[10], ["Rut", "Nombre", "Fecha Abono", "Forma Abono", "Banco", "Código Propio", "N° Cuenta", "Estado Abono", "Motivo", "Monto Abono"]);
     assert.deepEqual(f.slice(11), [
-      ["33.333.333-3", "PERSONA TRES EJEMPLO  ", "13/10/2026", "Abono en CuentaRUT", "BANCOESTADO", "", "33333333", "Pagado", " ".repeat(20), "$ 10.000"],
-      ["11.111.111-1", "PERSONA UNO EJEMPLO  ", "13/10/2026", "Pago Cash", "BANCOESTADO", "", "", "Pendiente de Cobro", " ".repeat(20), "$ 20.000"]]);
+      ["33.333.333-3", "PERSONA TRES EJEMPLO", "13/10/2026", "Abono en CuentaRUT", "BANCOESTADO", "", "33333333", "Pagado", " ".repeat(20), "$ 10.000"],
+      ["11.111.111-1", "PERSONA UNO EJEMPLO", "13/10/2026", "Pago Cash", "BANCOESTADO", "", "", "Pendiente de Cobro", " ".repeat(20), "$ 20.000"]]);
     assert.match(p.hoja, /<col min="3" max="3" width="13" customWidth="1"\/>/);
     const todoPagado = Dt.filasDetalle({ ...rem, concepto: "HONORARIOS", pagos: [rem.pagos[0]] }, { ahora }, {});
     assert.deepEqual(todoPagado.cabecera[3].slice(1), ["Remuneraciones / Pensiones", "Estado Nómina Pagos", "Aceptada"]);
