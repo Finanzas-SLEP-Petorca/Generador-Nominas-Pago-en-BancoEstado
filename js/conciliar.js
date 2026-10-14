@@ -10,6 +10,7 @@
 //     el banco cuenta cada documento como un pago y su "Monto Total $" es el del documento)
 
 import { S, normRut, fmtRut, parseMonto, money, tipoDe, esCobroCaja } from "./formato.js";
+import { leerMisNominas } from "./barrido.js";
 
 // Sin tildes, sin el signo de ordinal (BancoEstado escribe "Nº Nómina" con º y
 // "N° Documento" con °) y con los espacios colapsados.
@@ -150,7 +151,9 @@ export async function leerArchivoBanco(file) {
   if (typeof XLSX === "undefined") throw new Error("no se pudo cargar el lector de Excel");
   const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
   const hoja = wb.SheetNames.find(x => /detalle/i.test(x)) || wb.SheetNames[0];
-  return leerReporteBanco(XLSX.utils.sheet_to_json(wb.Sheets[hoja], { header: 1, raw: false, defval: "" }));
+  const filas = XLSX.utils.sheet_to_json(wb.Sheets[hoja], { header: 1, raw: false, defval: "" });
+  // "Mis Nóminas" (la lista de nóminas del convenio) va al barrido; el resto es un Detalle de Nómina.
+  return leerMisNominas(filas) || leerReporteBanco(filas);
 }
 
 // Reparte varios archivos entre las nóminas de la bitácora, por N° BancoEstado.
@@ -158,6 +161,7 @@ export async function leerArchivoBanco(file) {
 export function repartir(lecturas, nominas) {
   return lecturas.map(({ archivo, rep }) => {
     if (!rep.ok) return { archivo, error: rep.error };
+    if (rep.lista) return { archivo, rep, lista: true };
     // Las transferencias electrónicas llevan su propio N° de transferencia en el mismo campo: no cuentan.
     const cands = nominas.filter(n => S(n.operacion) === S(rep.operacion) && n.estado !== "anulada" && tipoDe(n) !== "transferencia");
     if (!cands.length) return { archivo, rep, sinNomina: true, error: `Ninguna nómina de la bitácora tiene el N° BancoEstado ${rep.operacion}.` };

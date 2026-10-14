@@ -9,6 +9,7 @@ import { M_FORMA_ABONO } from "../catalogos.js";
 import { st, aFecha, suscribirHistorial, cargarNomina, guardarCarga, deshacerCarga, resultadoPago, pagarPendientes, cobroPago, volverPendientes, anularNomina, editarTransferencia, aplicarResultadosBanco, registrarNominaBanco, exportarRespaldo } from "../datos.js";
 import { leerArchivoBanco, repartir } from "../conciliar.js";
 import { nominaDesdeReporte } from "../registrar.js";
+import { cruzarMisNominas, barridoHojas, CATEGORIAS } from "../barrido.js";
 import { $, esc, toast, accion, descargar, prefs, guardarPrefs, mensajeError, go } from "./comun.js";
 import { fechaHora } from "./paso1.js";
 
@@ -253,6 +254,25 @@ function htmlRegistrar(r, k) {
     <div class="row"><label>Fuente <select data-reg-fuente="${esc(r.archivo)}">${opciones}</select></label><button class="btn primary" data-reg="${k}">Registrar en la bitácora</button></div>`;
 }
 
+// Barrido con el Excel "Mis Nóminas": qué nóminas del banco faltan en la bitácora y cuáles tienen resultados por registrar.
+let filtroBarrido = "pend";
+function htmlBarrido(cruce, listas) {
+  const r = cruce.resumen;
+  const chips = [["pend", "Por atender", r.falta + r.resultados], ["falta", CATEGORIAS.falta.t, r.falta], ["resultados", CATEGORIAS.resultados.t, r.resultados],
+    ["ok", CATEGORIAS.ok.t, r.ok], ["sinpago", CATEGORIAS.sinpago.t, r.sinpago], ["solo", "Solo en la bitácora", r.soloPanel], ["todas", "Todas", cruce.filas.length]]
+    .map(([k, t, n]) => `<button class="btn small${filtroBarrido === k ? " primary" : ""}" data-barr="${k}">${esc(t)} <b>${n}</b></button>`).join("");
+  const ver = cruce.filas.filter(f => filtroBarrido === "todas" || f.cat === filtroBarrido || (filtroBarrido === "pend" && (f.cat === "falta" || f.cat === "resultados")));
+  const enBit = n => n ? `<a data-conc-go="${esc(n.id)}">N° ${n.num}</a><br><span class="tag ${status(n).c}">${esc(status(n).t)}</span>` : `<span class="hint">—</span>`;
+  const tabla = filtroBarrido === "solo"
+    ? (cruce.soloPanel.length ? `<div class="tablebox"><table><thead><tr><th>Nómina</th><th>N° BancoEstado</th><th>Tipo · fuente</th><th>Fecha pago</th><th style="text-align:right">Monto</th></tr></thead><tbody>${cruce.soloPanel.map(n => `<tr><td>${enBit(n)}</td><td class="mono">${esc(S(n.operacion) || "—")}</td><td>${esAbonos(n) ? "Remuneraciones" : "Proveedores"} · ${esc(n.fuente)}</td><td>${esc(fmtISO(n.fechaPago || n.fechaCarga))}</td><td class="num">${money(n.total)}</td></tr>`).join("")}</tbody></table></div>
+        <p class="hint" style="margin:6px 0 0">Están en la bitácora pero no en la lista del banco: revisa su N° BancoEstado (o si se generaron y no se subieron).</p>` : `<p class="hint">Todas las nóminas de la bitácora de estos convenios están en la lista del banco.</p>`)
+    : ver.length ? `<div class="tablebox"><table><thead><tr><th>N° BancoEstado</th><th>Nombre Nómina</th><th>Fecha pago</th><th style="text-align:right">Monto</th><th style="text-align:right">Pagos</th><th>En el banco</th><th>En la bitácora</th><th>Qué hacer</th></tr></thead><tbody>${ver.map(f => `<tr><td class="mono">${esc(f.operacion)}<br><span class="hint">${f.tipo === "abonos" ? "Remuneraciones" : "Proveedores"}</span></td><td>${esc(f.nombre)}</td><td>${esc(fmtISO(f.fechaPago))}</td><td class="num">${money(f.monto)}</td><td class="num">${f.cantidad}</td><td>${esc(f.estado)}</td><td>${enBit(f.nomina)}</td><td style="white-space:normal;min-width:220px"><span class="tag ${CATEGORIAS[f.cat].c}">${esc(CATEGORIAS[f.cat].t)}</span>${f.nota ? `<br><span class="hint">${esc(f.nota)}</span>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+    : `<p class="hint">No hay nóminas en esta categoría.</p>`;
+  return `<div class="conc"><div class="row" style="margin-top:0;justify-content:space-between"><b>Barrido de nóminas BancoEstado</b><span class="hint">${listas.map(l => esc(l.archivo)).join(" · ")}</span></div>
+    <p class="hint" style="margin:4px 0 0">${cruce.filas.length} nóminas en el banco: <b>${r.falta}</b> faltan en la bitácora, <b>${r.resultados}</b> con resultados por registrar, <b>${r.ok}</b> al día y <b>${r.sinpago}</b> sin pago en el banco. Para cada una que falte o tenga resultados pendientes, descarga su <b>Detalle de Nómina</b> (proveedores en la vista <i>Ver Documentos</i>) y súbelo aquí: se registra o se actualiza. Sube de nuevo este archivo para ver el avance.</p>
+    <div class="row" style="flex-wrap:wrap;gap:6px">${chips}<button class="btn small" id="barrXlsx">Descargar barrido (Excel)</button></div>${tabla}</div>`;
+}
+
 async function leerReportes(files) {
   const lecturas = [];
   for (const f of files) {
@@ -278,7 +298,10 @@ function renderConciliacion() {
   const datosNuevos = r => { if (r.error || !r.nomina || ((r.avisos || []).length > (r.reintegrados || 0) && !(r.cambios || []).length)) return 0; const m = metaDe(r); return m.detalle.length + ((m.convenio && m.convenio !== S(r.nomina.convenioBanco)) || (m.nombreNomina && m.nombreNomina !== S(r.nomina.nombreBanco)) || (m.conceptoPago && m.conceptoPago !== S(r.nomina.conceptoBanco)) ? 1 : 0) };
   const extra = res.reduce((a, r) => a + datosNuevos(r), 0);
 
-  const bloques = res.map((r, k) => {
+  const listas = res.filter(r => r.lista), cruce = listas.length ? cruzarMisNominas(listas.map(r => r.rep), st.nominas) : null;
+  const soloListas = listas.length === res.length;
+  const bloques = (cruce ? htmlBarrido(cruce, listas) : "") + res.map((r, k) => {
+    if (r.lista) return "";
     const cab = `<div class="row" style="margin-top:0;justify-content:space-between"><b>${esc(r.archivo)}</b>${r.rep && r.rep.operacion ? `<span class="hint">BancoEstado N° ${esc(r.rep.operacion)}${r.rep.estadoNomina ? " · " + esc(r.rep.estadoNomina) : ""}</span>` : ""}</div>`;
     // Recién registrada: hasta que llegue la nómina no se ofrece de nuevo (no se duplica).
     if (r.sinNomina && registradas.has(r.rep.operacion)) return `<div class="conc">${cab}<p class="hint" style="margin:6px 0 0"><span class="tag okk">Registrada</span> Actualizando la bitácora…</p></div>`;
@@ -299,9 +322,9 @@ function renderConciliacion() {
   }).join("");
 
   box.innerHTML = `<div class="row" style="margin-top:0;justify-content:space-between"><h2 style="margin:0">Reporte de BancoEstado</h2><button class="btn small" id="concCerrar">Cerrar ✕</button></div>
-    <p class="sub" style="margin-top:4px">Esto es lo que se registraría. Revísalo y aplícalo; hasta entonces no se escribe nada. Un pago cuyo monto no calce con el del banco, o con un estado que el panel no reconozca, se deja para registrar a mano.</p>
+    ${soloListas ? "" : `<p class="sub" style="margin-top:4px">Esto es lo que se registraría. Revísalo y aplícalo; hasta entonces no se escribe nada. Un pago cuyo monto no calce con el del banco, o con un estado que el panel no reconozca, se deja para registrar a mano.</p>`}
     ${bloques}
-    <div class="row">${total ? `<button class="btn primary" id="concAplicar">Registrar ${total} resultado${total > 1 ? "s" : ""}</button>` : extra ? `<button class="btn primary" id="concAplicar">Guardar los datos del banco</button>` : `<span class="hint">No hay resultados nuevos que registrar.</span>`}<button class="btn" id="concCancelar">Cancelar</button></div>`;
+    <div class="row">${soloListas ? "" : total ? `<button class="btn primary" id="concAplicar">Registrar ${total} resultado${total > 1 ? "s" : ""}</button>` : extra ? `<button class="btn primary" id="concAplicar">Guardar los datos del banco</button>` : `<span class="hint">No hay resultados nuevos que registrar.</span>`}<button class="btn" id="concCancelar">Cancelar</button></div>`;
 
   // Nóminas que no están en la bitácora: se registran desde el archivo, con su fuente elegida.
   box.querySelectorAll("[data-reg-fuente]").forEach(sel => sel.onchange = () => { fuenteReg.set(sel.dataset.regFuente, sel.value) });
@@ -317,6 +340,9 @@ function renderConciliacion() {
       renderConciliacion();
     } catch (e) { toast("No se pudo registrar la nómina: " + mensajeError(e)) }
   }));
+  // Barrido: filtro por categoría y descarga en Excel.
+  box.querySelectorAll("[data-barr]").forEach(b => b.onclick = () => { filtroBarrido = b.dataset.barr; renderConciliacion() });
+  if ($("barrXlsx")) $("barrXlsx").onclick = () => descargar("barrido_nominas_bancoestado_" + todayISO() + ".xlsx", libroReporte(barridoHojas(cruce, fmtISO)));
   $("concCerrar").onclick = cerrarConciliacion;
   $("concCancelar").onclick = cerrarConciliacion;
   box.querySelectorAll("[data-conc-go]").forEach(a => a.onclick = () => { openNom = a.dataset.concGo; renderBit(); $("hDetail").scrollIntoView({ behavior: "smooth", block: "start" }) });

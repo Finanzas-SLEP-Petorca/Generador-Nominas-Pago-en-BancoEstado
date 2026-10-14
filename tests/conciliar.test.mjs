@@ -310,4 +310,38 @@ prueba("en proceso queda pendiente con aviso; la vista por pago no sirve; un doc
   assert.equal(repartir([{ archivo: "x.xlsx", rep: leerReporteBanco(filas) }], [])[0].sinNomina, true);
 });
 
+console.log("\nBarrido con Mis Nóminas");
+const { leerMisNominas, cruzarMisNominas, barridoHojas } = await import(path.join(raiz, "js/barrido.js"));
+const misNominas = filas => [["Mis Nóminas"], [], ["Fecha : Oct 14, 2026, 3:22:13 PM"], [], ["Criterio de Búsqueda"], ["Convenio", "--Todos--"], ["Nº Nómina", "Todos", "Nombre Nómina", "Todos"],
+  ["Cantidad Pagos", "", "Monto Total $", "Todos"], ["Fecha Pago", "Todos", "Estado Nómina", "--Todos--"], ["Cantidad Nóminas", filas.length, "Monto Total de Nóminas", 0], [],
+  ["Convenio", "N° Nómina", "Nombre Nómina", "Fecha Pago", "Monto Total $", "Cantidad Pagos", "Estado"], ...filas];
+const PROV = "SLEP EJEMPLO PROVEEDORES(PROV-000)\t", REM = "SLEP EJEMPLO REMUNERACIONES(REM-000)\t";
+
+prueba("lee Mis Nóminas y lo cruza con la bitácora: falta, resultados, al día, sin pago y solo en la bitácora", () => {
+  const l = leerMisNominas(misNominas([
+    [PROV, "900001", "P02_UNO", "14/10/2026", "$ 3.000", "2", "Aceptada"],
+    [PROV, "900002", "P02_DOS", "13/10/2026", "$ 5.000", "1", "Aceptada Parcial"],
+    [PROV, "900003", "P02_TRES", "12/10/2026", "$ 7.000", "3", "Aceptada"],
+    [PROV, "900004", "P02_CUATRO", "11/10/2026", "$ 1.000", "1", "Vencida"],
+    [REM, "900005", "P02_FONDO_FIJO", "10/10/2026", "$ 9.000", "1", "Aceptada"]]));
+  assert.equal(l.lista, true); assert.equal(l.nominas.length, 5);
+  assert.deepEqual(l.nominas[4], { convenio: REM.trim(), operacion: "900005", nombre: "P02_FONDO_FIJO", fechaPago: "2026-10-10", monto: 9000, cantidad: 1, estado: "Aceptada", tipo: "abonos" });
+  assert.equal(leerMisNominas([["Mis Nóminas - Ver Nómina"]]), null);                   // un Detalle no es la lista
+  const bit = [
+    { id: "1", num: 1, estado: "cargada", operacion: "900001", total: 3000, pagos: [{ estado: "pagado" }] },
+    { id: "2", num: 2, estado: "cargada", operacion: "900002", total: 5000, pagos: [{ estado: "pendiente" }] },
+    { id: "5", num: 5, tipo: "abonos", estado: "cargada", operacion: "900005", total: 9000, pagos: [{ forma: "29", estado: "pagado", cobro: "" }] },
+    { id: "6", num: 6, estado: "cargada", operacion: "123", total: 1, pagos: [] },
+    { id: "7", num: 7, tipo: "transferencia", estado: "cargada", operacion: "555", total: 1, pagos: [] }];
+  const c = cruzarMisNominas([l], bit);
+  assert.deepEqual(c.filas.map(f => [f.operacion, f.cat, f.nomina && f.nomina.num]),
+    [["900001", "ok", 1], ["900002", "resultados", 2], ["900003", "falta", null], ["900004", "sinpago", null], ["900005", "resultados", 5]]);
+  assert.match(c.filas[4].nota, /por cobrar/);                                            // el banco ya la da Aceptada
+  assert.match(c.filas[2].nota, /Ver Documentos/);
+  assert.deepEqual(c.soloPanel.map(n => n.num), [6]);                                    // la transferencia no cuenta
+  assert.deepEqual(c.resumen, { falta: 1, resultados: 2, ok: 1, sinpago: 1, soloPanel: 1 });
+  const h = barridoHojas(c, x => x);
+  assert.equal(h[0].filas.length, 6); assert.equal(h[0].filas[3][0], "Falta en la bitácora"); assert.equal(h[1].filas[1][0], 6);
+});
+
 console.log(`\n${ok} pruebas, todas bien.`);

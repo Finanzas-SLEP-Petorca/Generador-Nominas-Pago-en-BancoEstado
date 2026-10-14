@@ -415,6 +415,28 @@ try {
     assert.deepEqual(reg, { cuantas: 1, estado: "cargada", fuente: "SEP", desdeBanco: true, concepto: "Otros", nombre: "P02_FUERA_DEL_PANEL_SEP", cargadaPor: "admin1@example.com", pagos: [["pagado", 12000, "8801*,8802"]], pendiente: false });
     await A.click("#concCerrar");
     log("reporte del banco de una nómina subida fuera del panel: se registra en la bitácora con sus pagos y estados, y el documento pendiente pasa a ella");
+
+    // Barrido: "Mis Nóminas" del banco cruzado con la bitácora.
+    const mis = [["Mis Nóminas"], [], ["Fecha : Oct 14, 2026, 3:22:13 PM"], [], ["Criterio de Búsqueda"], [], [], [], [], ["Cantidad Nóminas", 3], [],
+      ["Convenio", "N° Nómina", "Nombre Nómina", "Fecha Pago", "Monto Total $", "Cantidad Pagos", "Estado"],
+      ["SLEP EJEMPLO PROVEEDORES(PROV-000)\t", "9900001", "P02_FUERA_DEL_PANEL_SEP", "14/10/2026", "$ 12.000", "2", "Aceptada"],
+      ["SLEP EJEMPLO PROVEEDORES(PROV-000)\t", "9900002", "P02_OTRA", "14/10/2026", "$ 1.000", "1", "Aceptada"],
+      ["SLEP EJEMPLO PROVEEDORES(PROV-000)\t", "9900003", "P02_VENCIDA", "13/10/2026", "$ 1.000", "1", "Vencida"]];
+    const wbM = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wbM, XLSX.utils.aoa_to_sheet(mis), "MisNominas");
+    await A.setInputFiles("#fReporteBanco", { name: "Mis_Nominas.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from(XLSX.write(wbM, { type: "buffer", bookType: "xlsx" })) });
+    await esperar(A, () => /Barrido de nóminas BancoEstado/.test(document.getElementById("cardConciliar").textContent));
+    const barr = await A.textContent("#cardConciliar");
+    assert.match(barr, /3 nóminas en el banco: 1 faltan en la bitácora, 0 con resultados por registrar, 1 al día y 1 sin pago en el banco/);
+    assert.match(barr, /9900002/); assert.doesNotMatch(barr, /9900003/);                  // por atender: solo la que falta
+    await A.click('[data-barr="todas"]');
+    await esperar(A, () => /9900003/.test(document.getElementById("cardConciliar").textContent));
+    await A.$eval("#cardConciliar", e => e.scrollIntoView());
+    await (await A.$("#cardConciliar")).screenshot({ path: AQUI + "barrido.png" });
+    const bx = await descarga(A, () => A.click("#barrXlsx"));
+    assert.match(bx.nombre, /^barrido_nominas_bancoestado_\d{4}-\d\d-\d\d\.xlsx$/);
+    assert.deepEqual(XLSX.read(bx.bytes, { type: "buffer" }).SheetNames, ["Barrido", "Solo en la bitácora"]);
+    await A.click("#concCerrar");
+    log("barrido con Mis Nóminas: cuáles faltan en la bitácora, cuáles están al día y cuáles no se pagaron; descarga en Excel");
   }
   // Pagos a un proveedor: desde su ficha, "Ver pagos" deja el reporte de la bitácora solo con sus pagos, de todas las fechas.
   {
