@@ -285,7 +285,7 @@ function renderConciliacion() {
     if (r.sinNomina) return `<div class="conc">${cab}${htmlRegistrar(r, k)}</div>`;
     if (r.error) return `<div class="conc">${cab}<p class="hint" style="margin:6px 0 0"><span class="tag err">No se pudo usar</span> ${esc(r.error)}</p></div>`;
     const n = r.nomina, s = status(n);
-    const filas = (r.cambios || []).map(c => `<tr><td class="mono">${esc(fmtRut(c.rut))}</td><td>${esc(c.nombre)}</td><td class="num">${money(c.monto)}</td><td><span class="tag ${c.estado === "pagado" ? "okk" : "err"}">${esc(EST_PAGO[c.estado] || c.estado)}</span>${c.cobro !== undefined ? ` <span class="hint">por cobrar en banco</span>` : ""}</td><td>${esc(c.motivo)}</td></tr>`).join("");
+    const filas = (r.cambios || []).map(c => `<tr><td class="mono">${esc(fmtRut(c.rut))}</td><td>${esc(c.nombre)}</td><td class="num">${money(c.monto)}</td><td><span class="tag ${c.estado === "pagado" ? "okk" : "err"}">${esc(EST_PAGO[c.estado] || c.estado)}</span>${c.cobro === "cobrado" ? ` <span class="hint">cobrado en banco</span>` : c.cobro !== undefined ? ` <span class="hint">por cobrar en banco</span>` : ""}</td><td>${esc(c.motivo)}</td></tr>`).join("");
     const tabla = filas ? `<div class="tablebox"><table><thead><tr><th>RUT</th><th>Beneficiario</th><th style="text-align:right">Monto</th><th>Queda como</th><th>Motivo del banco</th></tr></thead><tbody>${filas}</tbody></table></div>` : "";
     const ya = (r.iguales || []).length ? `<p class="hint" style="margin:8px 0 0">${r.iguales.length} pago${r.iguales.length > 1 ? "s" : ""} ya ${r.iguales.length > 1 ? "estaban" : "estaba"} registrado${r.iguales.length > 1 ? "s" : ""} así; no se ${r.iguales.length > 1 ? "tocan" : "toca"}.</p>` : "";
     const avisos = (r.avisos || []).length ? `<ul class="hint" style="margin:8px 0 0;padding-left:18px">${r.avisos.map(a => `<li>${esc(a)}</li>`).join("")}</ul>` : "";
@@ -329,7 +329,7 @@ function renderConciliacion() {
       const e = porNomina.get(r.nomina.id) || { n: r.nomina, archivos: [], resultados: new Map(), meta: { ...metaDe(r), detalle: [] } };
       e.archivos.push(r.archivo);
       e.meta.detalle.push(...(r.detalle || []));
-      r.cambios.forEach(c => e.resultados.set(c.rut + "|" + c.monto, { rut: c.rut, monto: c.monto, estado: c.estado, motivo: c.motivo }));
+      r.cambios.forEach(c => e.resultados.set(c.rut + "|" + c.monto, { rut: c.rut, monto: c.monto, estado: c.estado, motivo: c.motivo, cobro: c.cobro }));
       porNomina.set(r.nomina.id, e);
     });
     let aplicados = 0, datos = 0; const problemas = [];

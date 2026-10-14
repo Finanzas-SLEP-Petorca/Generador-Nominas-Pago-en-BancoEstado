@@ -442,21 +442,25 @@ export const aplicarResultadosBanco = (id, resultados, archivo, meta = {}) => mo
     if (!p) { omitidos.push(`${fmtRut(r.rut)}: el pago ya no está en la nómina`); return }
     if (p.reint) { omitidos.push(`${fmtRut(r.rut)}: se reintegró a pendientes mientras revisabas`); return }
     const motivo = r.estado === "rechazado" ? S(r.motivo) : "";
-    if (p.estado === r.estado && S(p.motivo) === motivo) return;          // ya estaba así
-    if (p.estado !== "pendiente") { omitidos.push(`${fmtRut(r.rut)}: otro usuario ya lo registró con otro resultado`); return }
-    const antes = { estado: p.estado, motivo: p.motivo };
+    const cobro = r.estado === "pagado" && esCobroCaja(n, p) && r.cobro !== undefined ? S(r.cobro) : undefined;
+    if (p.estado === r.estado && S(p.motivo) === motivo && (cobro === undefined || S(p.cobro) === cobro)) return;          // ya estaba así
+    // Un pago ya registrado solo cambia su cobro en banco (cash o vale vista retirado); otro resultado es de otra persona.
+    if (p.estado !== "pendiente" && p.estado !== r.estado) { omitidos.push(`${fmtRut(r.rut)}: otro usuario ya lo registró con otro resultado`); return }
+    const antes = { estado: p.estado, motivo: p.motivo, ...(cobro !== undefined ? { cobro: S(p.cobro) } : {}) };
     p.estado = r.estado; p.motivo = motivo;
     // El cobro en banco solo existe para un pago cash o vale vista pagado.
     if (r.estado !== "pagado" && (p.cobro || p.cobroFecha)) { p.cobro = ""; p.cobroFecha = "" }
+    if (cobro !== undefined && S(p.cobro) !== cobro) { p.cobro = cobro; p.cobroFecha = cobro ? todayISO() : "" }
     hechos.push({ p, antes });
   });
   // Nombre y forma de pago como los escribe el banco (para el Detalle de Nómina).
   let nDetalle = 0;
   (meta.detalle || []).forEach(d => {
     const p = pagos.find(x => x.rut === d.rut && x.monto === d.monto); if (!p) return;
-    const nombre = S(d.nombre) && S(d.nombre) !== S(p.nombre) ? S(d.nombre) : "", forma = S(d.forma);
+    // El nombre del banco se guarda tal cual (puede traer espacios al final que el banco conserva).
+    const nombre = S(d.nombre) && String(d.nombre) !== S(p.nombre) ? String(d.nombre) : "", forma = S(d.forma);
     const banco = S(d.banco);
-    if (S(p.nombreBanco) === nombre && S(p.formaBanco) === forma && S(p.bancoBanco) === banco) return;
+    if ((p.nombreBanco || "") === nombre && S(p.formaBanco) === forma && S(p.bancoBanco) === banco) return;
     if (nombre) p.nombreBanco = nombre; else delete p.nombreBanco;
     if (forma) p.formaBanco = forma; else delete p.formaBanco;
     if (banco) p.bancoBanco = banco; else delete p.bancoBanco;
@@ -476,11 +480,12 @@ export const aplicarResultadosBanco = (id, resultados, archivo, meta = {}) => mo
     cambios: { ...datosBanco, pagos }, salida: { aplicados: hechos.length, detalle: nDetalle, omitidos },
     hist: [
       hist("resultado del banco", refN(n), `Del reporte de BancoEstado${archivo ? ", archivo " + archivo : ""}: ${resumen}`, { archivo: S(archivo) }, { pagos: hechos.length }),
-      ...hechos.map(h => hist("resultado de pago", refN(n), `${fmtRut(h.p.rut)} ${h.p.nombre} (${money(h.p.monto)}): ${h.antes.estado} → ${h.p.estado}${h.p.motivo ? ", motivo: " + h.p.motivo : ""} (reporte del banco)`, h.antes, { estado: h.p.estado, motivo: h.p.motivo }))
+      ...hechos.map(h => hist(h.antes.estado === h.p.estado ? "cobro en banco" : "resultado de pago", refN(n), `${fmtRut(h.p.rut)} ${h.p.nombre} (${money(h.p.monto)}): ${h.antes.estado === h.p.estado ? "" : h.antes.estado + " → " + h.p.estado}${h.p.motivo ? ", motivo: " + h.p.motivo : ""}${"cobro" in h.antes ? `${h.antes.estado === h.p.estado ? "" : ", "}${COBRO_TXT[h.antes.cobro] || h.antes.cobro} → ${COBRO_TXT[S(h.p.cobro)] || h.p.cobro}` : ""} (reporte del banco)`, h.antes, { estado: h.p.estado, motivo: h.p.motivo, ...("cobro" in h.antes ? { cobro: S(h.p.cobro) } : {}) }))
     ]
   };
 });
 // Cobro en banco de un pago cash o vale vista pagado: "" (pendiente de cobro), "cobrado" o "devuelto".
+const COBRO_TXT = { "": "pendiente de cobro", cobrado: "cobrado en banco", devuelto: "no cobrado, devuelto a la cuenta" };
 export const cobroPago = (id, i, cobro, fecha) => modificarNomina(id, n => {
   if (n.estado !== "cargada") throw new Conflicto("El cobro se registra con la nómina cargada");
   const pagos = n.pagos.map(p => ({ ...p })); const p = pagos[i];

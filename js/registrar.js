@@ -38,8 +38,11 @@ export function nominaDesdeReporte(rep, ctx) {
         cuenta: abonosTipo ? (FORMAS_SIN_CUENTA.has(forma) ? "" : S(f.cuenta)) : (m && m.banco === banco ? S(m.cuenta) : ""),
         monto: 0, estado: t ? t.estado : "pendiente", motivo: t && t.estado === "rechazado" ? S(f.motivo) : "", reint: "", formaBanco: S(f.forma), bancoBanco: S(f.banco), docs: [] };
       // El nombre como lo escribe el banco, para emitir el Detalle de Nómina igual.
-      if (S(f.nombre) && S(f.nombre) !== p.nombre) p.nombreBanco = S(f.nombre);
+      const nombreBco = abonosTipo ? f.nombreTal || S(f.nombre) : S(f.nombre);
+      if (nombreBco && nombreBco !== p.nombre) p.nombreBanco = nombreBco;
+      // Cash o vale vista: "Pendiente de Cobro" queda por cobrar; "Pagado", ya cobrado en banco.
       if (t && t.cobro !== undefined) p.cobro = t.cobro;
+      else if (t && t.estado === "pagado" && abonosTipo && FORMAS_SIN_CUENTA.has(forma)) { p.cobro = "cobrado"; p.cobroFecha = iso(rep.fechaPago) }
       if (!t) avisos.push(`${fmtRut(f.rut)} ${p.nombre}: el banco informa "${f.estado}"; queda pendiente y se registra después con su reporte.`);
       if (abonosTipo && m && m.email) p.email = S(m.email);
       porClave.set(clave, p); pagos.push(p);

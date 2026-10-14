@@ -9,7 +9,7 @@
 //   · Proveedores, "Ver Documentos" → una fila por documento (se agrupan por RUT;
 //     el banco cuenta cada documento como un pago y su "Monto Total $" es el del documento)
 
-import { S, normRut, fmtRut, parseMonto, money, tipoDe } from "./formato.js";
+import { S, normRut, fmtRut, parseMonto, money, tipoDe, esCobroCaja } from "./formato.js";
 
 // Sin tildes, sin el signo de ordinal (BancoEstado escribe "Nº Nómina" con º y
 // "N° Documento" con °) y con los espacios colapsados.
@@ -49,7 +49,8 @@ export function leerReporteBanco(filas) {
   for (let i = hi + 1; i < filas.length; i++) {
     const g = k => k in map ? filas[i][map[k]] : "";
     const rut = normRut(g("rut")); if (!rut) continue;
-    pagos.push({ rut, nombre: S(g("nombre")), forma: S(g("forma")), monto: parseMonto(g("monto")), estado: S(g("estado")), motivo: S(g("motivo")),
+    // nombreTal: el nombre sin recortar (en remuneraciones el banco lo deja tal como se subió, a veces con espacios al final).
+    pagos.push({ rut, nombre: S(g("nombre")), nombreTal: String(g("nombre") ?? "").replace(/^\s+/, ""), forma: S(g("forma")), monto: parseMonto(g("monto")), estado: S(g("estado")), motivo: S(g("motivo")),
       banco: S(g("banco")), cuenta: S(g("cuenta")), ndoc: S(g("ndoc")), tipodoc: S(g("tipodoc")), montodoc: parseMonto(g("montodoc")), fechadoc: S(g("fechadoc")) });
   }
   const operacion = S(enc["n nomina"]);
@@ -70,6 +71,7 @@ export function leerReporteBanco(filas) {
 // vistos en archivos reales: un estado que no esté aquí NO se toca, se avisa.
 // "Pendiente de Cobro" es un pago cash o vale vista que ya salió de la cuenta
 // pero que el beneficiario todavía no retira: pagado y por cobrar en banco.
+// Cuando lo retira, el banco lo pasa a "Pagado" (conciliar lo registra cobrado).
 const ESTADOS = {
   "pagado": { estado: "pagado" },
   "rechazado": { estado: "rechazado" },
@@ -117,8 +119,9 @@ export function conciliar(rep, n) {
     // Por documento, "Monto Total $" es el de cada documento: el pago es la suma.
     const montoOk = isNaN(f.monto) || f.monto === p.monto || f.suma === p.monto;
     // Nombre y forma de pago como los escribe el banco, para emitir después el Detalle de Nómina igual.
-    if (montoOk && ((f.nombre && f.nombre !== S(p.nombreBanco || p.nombre)) || (f.forma && f.forma !== S(p.formaBanco)) || (f.banco && f.banco !== S(p.bancoBanco))))
-      detalle.push({ rut: p.rut, monto: p.monto, nombre: f.nombre, forma: f.forma, banco: f.banco });
+    const nombreBco = rep.vista === "remuneraciones" ? f.nombreTal || f.nombre : f.nombre;
+    if (montoOk && ((nombreBco && nombreBco !== (p.nombreBanco || S(p.nombre))) || (f.forma && f.forma !== S(p.formaBanco)) || (f.banco && f.banco !== S(p.bancoBanco))))
+      detalle.push({ rut: p.rut, monto: p.monto, nombre: nombreBco, forma: f.forma, banco: f.banco });
     // Un pago ya reintegrado a pendientes no se vuelve a tocar (no es un problema del archivo).
     if (p.reint) { avisos.push(`${quien}: ya se reintegró a pendientes; no se modifica.`); reintegrados++; return }
     if (!montoOk) {
@@ -128,9 +131,12 @@ export function conciliar(rep, n) {
     const t = traducirEstado(f.estado);
     if (!t) { avisos.push(`${quien}: el banco informa "${f.estado}", que esta versión no reconoce; regístralo a mano.`); return }
     const motivo = t.estado === "rechazado" ? S(f.motivo) : "";
-    const item = { i, rut: p.rut, nombre: p.nombre, monto: p.monto, antes: p.estado, estado: t.estado, motivo, cobro: t.cobro };
+    // Un pago cash o vale vista que el banco ya informa "Pagado" (antes "Pendiente de Cobro") se cobró.
+    // Lo que ya se registró a mano (cobrado o devuelto) no vuelve a "por cobrar" por un reporte anterior.
+    const cobro = t.cobro === undefined && t.estado === "pagado" && esCobroCaja(n, p) ? "cobrado" : t.cobro === "" && S(p.cobro) ? undefined : t.cobro;
+    const item = { i, rut: p.rut, nombre: p.nombre, monto: p.monto, antes: p.estado, estado: t.estado, motivo, cobro, antesCobro: S(p.cobro) };
     // Ya registrado igual (se volvió a subir el mismo archivo): no se reescribe.
-    if (p.estado === t.estado && S(p.motivo) === motivo && (t.cobro === undefined || S(p.cobro) === t.cobro)) iguales.push(item);
+    if (p.estado === t.estado && S(p.motivo) === motivo && (cobro === undefined || S(p.cobro) === cobro)) iguales.push(item);
     else cambios.push(item);
   });
   porRut.forEach((f, rut) => {

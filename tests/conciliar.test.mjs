@@ -231,6 +231,26 @@ prueba("una transferencia electrónica con el mismo número no recibe el reporte
   assert.match(conciliar(normal(), tef).error, /transferencia electrónica/);
 });
 
+prueba("pago cash: de Pendiente de Cobro a Pagado se registra cobrado en banco; lo marcado a mano no se revierte", () => {
+  const cash = (cobro) => ({ id: "21", num: 21, tipo: "abonos", operacion: "900001", estado: "cargada", total: 30000,
+    pagos: [{ rut: n1, nombre: "PERSONA UNA", forma: "29", monto: 10000, estado: "pagado", motivo: "", cobro },
+            { rut: n2, nombre: "PERSONA DOS", forma: "29", monto: 20000, estado: "pagado", motivo: "", cobro: "" }] });
+  const rep = leerReporteBanco([...cabecera("900001", "P02_FONDO_FIJO_SEP", "$30.000", 2, "Aceptada Parcial"), H_REM,
+    rem(R1, "PERSONA UNA", "$ 10.000", "Pagado"), rem(R2, "PERSONA DOS", "$ 20.000", "Pendiente de Cobro")]);
+  const c = conciliar(rep, cash(""));
+  assert.deepEqual(c.cambios.map(x => [x.rut, x.estado, x.cobro]), [[n1, "pagado", "cobrado"]]);
+  assert.deepEqual(c.iguales.map(x => x.rut), [n2]);
+  // Ya registrado cobrado: no hay nada que cambiar.
+  assert.equal(conciliar(rep, cash("cobrado")).cambios.length, 0);
+  // El nombre en remuneraciones se guarda tal como lo escribe el banco, con sus espacios al final.
+  const conEsp = leerReporteBanco([...cabecera("900001", "P02_FONDO_FIJO_SEP", "$30.000", 2, "Aceptada"), H_REM,
+    rem(R1, "Persona Una  ", "$ 10.000", "Pagado"), rem(R2, "PERSONA DOS", "$ 20.000", "Pendiente de Cobro")]);
+  assert.deepEqual(conciliar(conEsp, cash("")).detalle.map(d => d.nombre), ["Persona Una  ", "PERSONA DOS"]);
+  // Marcado a mano como devuelto y el banco aún dice Pendiente de Cobro: no se toca.
+  const n = cash(""); n.pagos[1].cobro = "devuelto";
+  assert.equal(conciliar(rep, n).cambios.length, 1);
+});
+
 console.log("\nNómina del banco que no está en la bitácora");
 const { nominaDesdeReporte } = await import(path.join(raiz, "js/registrar.js"));
 const ctxReg = (o = {}) => ({ fuentes: ["GENERAL", "SEP", "JUNJI"], defFuente: "GENERAL", maestro: {}, docs: [], abonos: [], nominas: [], ...o });

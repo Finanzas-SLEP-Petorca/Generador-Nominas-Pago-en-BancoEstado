@@ -460,6 +460,10 @@ ok("reporte de pagos filtrado por proveedor o beneficiario (RUT o nombre)", () =
       ["33.333.333-3", "PERSONA TRES EJEMPLO", "13/10/2026", "Abono en CuentaRUT", "BANCOESTADO", "", "33333333", "Pagado", " ".repeat(20), "$ 10.000"],
       ["11.111.111-1", "PERSONA UNO EJEMPLO", "13/10/2026", "Pago Cash", "BANCOESTADO", "", "", "Pendiente de Cobro", " ".repeat(20), "$ 20.000"]]);
     assert.match(p.hoja, /<col min="3" max="3" width="13" customWidth="1"\/>/);
+    // Pago cash ya cobrado: el banco lo deja "Pagado" con el motivo vacío.
+    const cobrado = Dt.filasDetalle({ ...rem, pagos: [rem.pagos[0], { ...rem.pagos[1], cobro: "cobrado" }] }, { ahora }, {});
+    assert.deepEqual(cobrado.filas[2].slice(7, 9), ["Pagado", ""]);
+    assert.equal(cobrado.estadoNomina, "Aceptada");
     const todoPagado = Dt.filasDetalle({ ...rem, concepto: "HONORARIOS", pagos: [rem.pagos[0]] }, { ahora }, {});
     assert.deepEqual(todoPagado.cabecera[3].slice(1), ["Remuneraciones / Pensiones", "Estado Nómina Pagos", "Aceptada"]);
     const lr = Cc.leerReporteBanco(f);
