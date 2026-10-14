@@ -364,7 +364,7 @@ try {
     await A.setInputFiles("#fReporteBanco", { name: "banco.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from(XLSX.write(wbB, { type: "buffer", bookType: "xlsx" })) });
     await esperar(A, () => !!document.getElementById("concAplicar"));
     assert.equal(await A.textContent("#concAplicar"), "Guardar los datos del banco");
-    assert.match(await A.textContent("#cardConciliar"), /nombre de la nómina P02_BANCO_GENERAL, nombre y forma de pago de \d+ beneficiario/);
+    assert.match(await A.textContent("#cardConciliar"), /nombre de la nómina P02_BANCO_GENERAL, concepto de pago, nombre, banco y forma de pago de \d+ beneficiario/);
     await A.click("#concAplicar");
     await esperar(A, () => document.getElementById("cardConciliar").hidden);
     assert.match(await toastTxt(A), /Datos del banco guardados/);
@@ -379,6 +379,42 @@ try {
     assert.ok(!(await A.$("#concAplicar")), "no debería haber nada que guardar");
     await A.click("#concCerrar");
     log("Detalle de Nómina: el reporte del banco deja el nombre de la nómina, y el nombre y la forma de pago como los escribe el banco");
+
+    // Una nómina que se subió a BancoEstado fuera del panel: el reporte del banco la registra en la
+    // bitácora con sus pagos y estados, y el documento pendiente que viene en el archivo pasa a ella.
+    const idPend = await A.evaluate(async rut => {
+      const fs = await import("https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js");
+      const ref = fs.doc(fs.collection(fs.getFirestore(), "pago_documentos"));
+      await fs.setDoc(ref, { rut, fecha: "01092026", monto: 7000, ndoc: "8801", tipo: "33", fuente: "GENERAL", sel: true, dc: "", createdBy: "admin1@example.com", updatedBy: "admin1@example.com", createdAt: fs.serverTimestamp(), updatedAt: fs.serverTimestamp() });
+      return ref.id;
+    }, R[0]);
+    const rutFmt = R[0].slice(0, -1).replace(/\B(?=(\d{3})+(?!\d))/g, ".") + "-" + R[0].slice(-1);
+    const fuera = [["Mis Nóminas - Ver Nómina - Ver Documentos"], [], ["Fecha : Oct 14, 2026, 2:49:00 PM"], [], ["Detalle Nómina"],
+      ["Convenio", "SLEP EJEMPLO PROVEEDORES(PROV-000)\t", "Nº Nómina", 9900001], ["Nombre Nómina", "P02_FUERA_DEL_PANEL_SEP", "Monto Total $", "$12.000"],
+      ["Cantidad Pagos", "2", "Fecha Pago", "14/10/2026"], ["Concepto Pago", "Otros", "Estado Nómina Pagos", "Aceptada"], [],
+      f[10],
+      [rutFmt, "COMERCIAL UNO LIMITADA  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCO SANTANDER-CHILE", "$ 7.000", "Pagado", " ".repeat(20), 8801, "FACTURA ELECTRONICA", "01/09/2026", "$ 7.000"],
+      [rutFmt, "COMERCIAL UNO LIMITADA  ", "", "Abono en Cuenta Corriente / Cuenta Vista", "BANCO SANTANDER-CHILE", "$ 5.000", "Pagado", " ".repeat(20), 8802, "FACTURA ELECTRONICA", "02/09/2026", "$ 5.000"]];
+    const wbF = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wbF, XLSX.utils.aoa_to_sheet(fuera), "DetalleNomina");
+    await A.setInputFiles("#fReporteBanco", { name: "fuera.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from(XLSX.write(wbF, { type: "buffer", bookType: "xlsx" })) });
+    await esperar(A, () => !!document.querySelector("[data-reg]"));
+    const card = await A.textContent("#cardConciliar");
+    assert.match(card, /No está en la bitácora/); assert.match(card, /P02_FUERA_DEL_PANEL_SEP/); assert.match(card, /1 documento pendiente/);
+    assert.equal(await A.inputValue("[data-reg-fuente]"), "SEP");                       // la fuente sale del nombre de la nómina
+    await A.click("[data-reg]");
+    await esperar(A, () => /registrada en la bitácora como N° \d+/.test(document.getElementById("toast").textContent));
+    await esperar(A, () => /ya estaba(n)? registrado/.test(document.getElementById("cardConciliar").textContent), null);
+    const reg = await A.evaluate(async id => {
+      const fs = await import("https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js");
+      const db = fs.getFirestore();
+      const q = await fs.getDocs(fs.query(fs.collection(db, "pago_nominas"), fs.where("operacion", "==", "9900001")));
+      const n = q.docs[0].data();
+      return { cuantas: q.size, estado: n.estado, fuente: n.fuente, desdeBanco: n.desdeBanco, concepto: n.conceptoBanco, nombre: n.nombreBanco, cargadaPor: n.cargadaPor,
+        pagos: n.pagos.map(p => [p.estado, p.monto, p.docs.map(d => d.ndoc + (d.docId ? "*" : "")).join(",")]), pendiente: (await fs.getDoc(fs.doc(db, "pago_documentos", id))).exists() };
+    }, idPend);
+    assert.deepEqual(reg, { cuantas: 1, estado: "cargada", fuente: "SEP", desdeBanco: true, concepto: "Otros", nombre: "P02_FUERA_DEL_PANEL_SEP", cargadaPor: "admin1@example.com", pagos: [["pagado", 12000, "8801*,8802"]], pendiente: false });
+    await A.click("#concCerrar");
+    log("reporte del banco de una nómina subida fuera del panel: se registra en la bitácora con sus pagos y estados, y el documento pendiente pasa a ella");
   }
   // Pagos a un proveedor: desde su ficha, "Ver pagos" deja el reporte de la bitácora solo con sus pagos, de todas las fechas.
   {
@@ -514,6 +550,7 @@ try {
     await esperar(A, () => !document.getElementById("cardConciliar").hidden);
     assert.match(await A.textContent("#cardConciliar"), /Ninguna nómina de la bitácora tiene el N° BancoEstado 9999999/);
     assert.equal(await A.$("#concAplicar"), null);            // sin nada que aplicar no hay botón
+    assert.ok(await A.$("[data-reg]"), "ofrece registrarla en la bitácora");   // (no se registra aquí)
     // Un monto que no calza con el del banco se avisa y no se toca.
     await A.setInputFiles("#fReporteBanco", { name: "monto.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: reporteBanco("7654322", [filaBanco(P[1], "MARIA JOSE SOTO", 99999, "Pagado")]) });
     await esperar(A, () => document.getElementById("cardConciliar").textContent.includes("$99.999"));

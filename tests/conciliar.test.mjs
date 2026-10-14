@@ -97,7 +97,7 @@ prueba("por documento como lo descarga el banco: cada documento es un pago con s
   assert.deepEqual(c.avisos, []);
 });
 
-prueba("guarda el nombre y la forma de pago como los escribe el banco, solo si cambian", () => {
+prueba("guarda el nombre, la forma de pago y el banco como los escribe el banco, solo si cambian", () => {
   const filas = [...cabecera("900001", "P02_EJEMPLO_GENERAL", "$3.000", 2, "Aceptada"), H_DOC,
     docFila(R1, "PROVEEDOR UNO  ", "$ 1.000", "Pagado", "", "201", "$ 1.000"),
     docFila(R2, "PROV DOS", "$ 2.000", "Pagado", "", "349", "$ 2.000")];
@@ -105,10 +105,10 @@ prueba("guarda el nombre y la forma de pago como los escribe el banco, solo si c
   assert.equal(r.pagos[0].forma, "Abono en Cuenta Corriente / Cuenta Vista");
   const c = conciliar(r, nomina());
   assert.deepEqual(c.detalle, [
-    { rut: n1, monto: 1000, nombre: "PROVEEDOR UNO", forma: "Abono en Cuenta Corriente / Cuenta Vista" },
-    { rut: n2, monto: 2000, nombre: "PROV DOS", forma: "Abono en Cuenta Corriente / Cuenta Vista" }]);
+    { rut: n1, monto: 1000, nombre: "PROVEEDOR UNO", forma: "Abono en Cuenta Corriente / Cuenta Vista", banco: "BANCOESTADO" },
+    { rut: n2, monto: 2000, nombre: "PROV DOS", forma: "Abono en Cuenta Corriente / Cuenta Vista", banco: "BANCOESTADO" }]);
   // Ya guardados: no se vuelven a proponer.
-  const n = nomina(); n.pagos[0].formaBanco = "Abono en Cuenta Corriente / Cuenta Vista";
+  const n = nomina(); n.pagos[0].formaBanco = "Abono en Cuenta Corriente / Cuenta Vista"; n.pagos.forEach(p => { p.bancoBanco = "BANCOESTADO" });
   n.pagos[1].nombreBanco = "PROV DOS"; n.pagos[1].formaBanco = "Abono en Cuenta Corriente / Cuenta Vista";
   assert.deepEqual(conciliar(r, n).detalle, []);
 });
@@ -229,6 +229,65 @@ prueba("una transferencia electrónica con el mismo número no recibe el reporte
   const out = repartir([{ archivo: "a.xlsx", rep: normal() }], [tef, nomina()]);
   assert.equal(out[0].nomina.num, 7);
   assert.match(conciliar(normal(), tef).error, /transferencia electrónica/);
+});
+
+console.log("\nNómina del banco que no está en la bitácora");
+const { nominaDesdeReporte } = await import(path.join(raiz, "js/registrar.js"));
+const ctxReg = (o = {}) => ({ fuentes: ["GENERAL", "SEP", "JUNJI"], defFuente: "GENERAL", maestro: {}, docs: [], abonos: [], nominas: [], ...o });
+
+prueba("proveedores por documento: un pago por RUT con sus documentos, estados del banco y cruce con pendientes", () => {
+  const filas = [...cabecera("900777", "P02_INTERNET_JUNJI", "$3.000", 3, "Aceptada Parcial"), H_DOC,
+    docFila(R1, "PROVEEDOR UNO S.A.", "$ 1.000", "Pagado", "", "201", "$ 1.000"),
+    docFila(R2, "PROVEEDOR DOS", "$ 800", "Rechazado", "CUENTA CERRADA", "349", "$ 800"),
+    docFila(R2, "PROVEEDOR DOS", "$ 1.200", "Rechazado", "CUENTA CERRADA", "351", "$ 1.200")];
+  filas[8][1] = "Otros";
+  const rep = leerReporteBanco(filas);
+  assert.equal(rep.vista, "documentos"); assert.equal(rep.conceptoPago, "Otros");
+  // Pendiente del panel: el 349 de R2 (con ceros a la izquierda y sin tipo) pasa a la nómina.
+  const pend = [{ id: "d9", rut: n2, ndoc: "0349", tipo: "", fecha: "20092026", monto: 800, dc: "55" }, { id: "d8", rut: n3, ndoc: "349", tipo: "33", monto: 1 }];
+  const r = nominaDesdeReporte(rep, ctxReg({ docs: pend, maestro: { [n1]: { banco: "012", cuenta: "111" } } }));
+  assert.equal(r.tipo, "proveedores"); assert.equal(r.fuente, "JUNJI"); assert.equal(r.archivo, "P02_INTERNET_JUNJI");
+  assert.deepEqual(r.pagos.map(p => [p.rut, p.monto, p.estado, p.motivo, p.docs.length, p.cuenta]), [[n1, 1000, "pagado", "", 1, "111"], [n2, 2000, "rechazado", "CUENTA CERRADA", 2, ""]]);
+  assert.equal(r.pagos[0].nombre, "PROVEEDOR UNO S A"); assert.equal(r.pagos[0].nombreBanco, "PROVEEDOR UNO S.A.");
+  assert.equal(r.pagos[0].formaBanco, "Abono en Cuenta Corriente / Cuenta Vista"); assert.equal(r.pagos[0].bancoBanco, "BANCOESTADO");
+  assert.deepEqual(r.pagos[1].docs[0], { fecha: "25092026", monto: 800, ndoc: "349", tipo: "34", dc: "55", docId: "d9" });
+  assert.deepEqual(r.consumir, { docs: ["d9"], abonos: [] }); assert.equal(r.cruzados, 1);
+  assert.deepEqual(r.resumen, { pagados: 1, rechazados: 1, pendientes: 0, documentos: 3 });
+  assert.equal(r.lineas.filter(l => l.tipo === 1).length, 2); assert.equal(r.lineas.filter(l => l.tipo === 2).length, 3);
+  assert.deepEqual(r.datosCarga, { fechaCarga: "2026-09-30", fechaPago: "2026-09-30", operacion: "900777", obs: "Registrada desde el Detalle de Nómina de BancoEstado", nombreBanco: "P02_INTERNET_JUNJI", convenioBanco: "SLEP EJEMPLO PROVEEDORES(PROV-000)", conceptoBanco: "Otros" });
+  assert.deepEqual(r.avisos, []);
+  // Ya registrada: el mismo archivo calza entero con ella.
+  const n = { id: "30", num: 30, estado: "cargada", total: r.total, pagos: r.pagos, ...r.datosCarga };
+  const c = conciliar(rep, n);
+  assert.deepEqual([c.cambios.length, c.iguales.length, c.avisos, c.detalle], [0, 2, [], []]);
+});
+
+prueba("remuneraciones: un pago por fila, con su cuenta, y cruce con abonos pendientes por RUT y monto", () => {
+  const filas = [...cabecera("900778", "P02_FONDO_FIJO_SEP", "$30.000", 2, "Aceptada", "SLEP EJEMPLO REMUNERACIONES(REM-000)"), H_REM,
+    [R1, "PERSONA UNO", "30/09/2026", "Abono en CuentaRUT", "BANCOESTADO", "", "11111111", "Pagado", "", "$ 10.000"],
+    rem(R3, "PERSONA TRES", "$ 20.000", "Pendiente de Cobro")];
+  const rep = leerReporteBanco(filas);
+  assert.equal(rep.vista, "remuneraciones");
+  const r = nominaDesdeReporte(rep, ctxReg({ abonos: [{ id: "a1", rut: n3, monto: 20000, concepto: "FONDOS FIJOS", glosa: "CAJA" }] }));
+  assert.equal(r.tipo, "abonos"); assert.equal(r.fuente, "SEP"); assert.equal(r.concepto, "FONDOS FIJOS");
+  assert.deepEqual(r.pagos.map(p => [p.rut, p.forma, p.banco, p.cuenta, p.monto, p.estado, p.cobro]), [[n1, "30", "012", "11111111", 10000, "pagado", undefined], [n3, "29", "012", "", 20000, "pagado", ""]]);
+  assert.deepEqual(r.pagos[1].docs, [{ monto: 20000, abonoId: "a1", concepto: "FONDOS FIJOS", glosa: "CAJA" }]);
+  assert.deepEqual(r.pagos[0].docs, [{ monto: 10000, concepto: "FONDOS FIJOS", glosa: "" }]);
+  assert.deepEqual(r.consumir, { docs: [], abonos: ["a1"] });
+  assert.equal(r.lineas[0].tipo, 7);
+});
+
+prueba("en proceso queda pendiente con aviso; la vista por pago no sirve; un documento de otra nómina se avisa", () => {
+  const filas = [...cabecera("900779", "P02_PROVEEDORES_GENERAL", "$1.000", 1, "En Proceso"), H_DOC,
+    docFila(R1, "PROVEEDOR UNO", "$ 1.000", "Aceptado en validación", "", "201", "$ 1.000")];
+  const otra = { num: 4, estado: "cargada", pagos: [{ rut: n1, docs: [{ ndoc: "201" }] }] };
+  const r = nominaDesdeReporte(leerReporteBanco(filas), ctxReg({ nominas: [otra] }));
+  assert.equal(r.pagos[0].estado, "pendiente");
+  assert.equal(r.avisos.length, 2);
+  assert.match(r.avisos[0], /Aceptado en validación/); assert.match(r.avisos[1], /ya está en la nómina N° 4/);
+  assert.match(nominaDesdeReporte(normal(), ctxReg()).error, /Ver Documentos/);
+  // repartir lo marca para registrarlo
+  assert.equal(repartir([{ archivo: "x.xlsx", rep: leerReporteBanco(filas) }], [])[0].sinNomina, true);
 });
 
 console.log(`\n${ok} pruebas, todas bien.`);

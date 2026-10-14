@@ -6,8 +6,9 @@ import { bankWorkbook, abonosWorkbook, libroReporte, libroDetalle } from "../exc
 import { filasDetalle, partesDetalle, nombreDetalle, puedeDetalle } from "../detalle.js";
 import { pdfReporte, pdfNomina, cargarPdf } from "../pdf.js";
 import { M_FORMA_ABONO } from "../catalogos.js";
-import { st, aFecha, suscribirHistorial, cargarNomina, guardarCarga, deshacerCarga, resultadoPago, pagarPendientes, cobroPago, volverPendientes, anularNomina, editarTransferencia, aplicarResultadosBanco, exportarRespaldo } from "../datos.js";
+import { st, aFecha, suscribirHistorial, cargarNomina, guardarCarga, deshacerCarga, resultadoPago, pagarPendientes, cobroPago, volverPendientes, anularNomina, editarTransferencia, aplicarResultadosBanco, registrarNominaBanco, exportarRespaldo } from "../datos.js";
 import { leerArchivoBanco, repartir } from "../conciliar.js";
+import { nominaDesdeReporte } from "../registrar.js";
 import { $, esc, toast, accion, descargar, prefs, guardarPrefs, mensajeError, go } from "./comun.js";
 import { fechaHora } from "./paso1.js";
 
@@ -231,6 +232,27 @@ const htmlHistorial = lista => lista.length ? lista.map(h => `<li><b>${esc(h.acc
 // se rehace en cada render contra st.nominas, así la vista previa no envejece
 // si otro usuario registra algo mientras tanto.
 // ---------------------------------------------------------------------------
+// Nómina del archivo que no está en la bitácora: lo que se registraría.
+const fuenteReg = new Map(), registradas = new Set();
+const prepRegistro = r => {
+  const p = nominaDesdeReporte(r.rep, { fuentes: st.config.fuentes, defFuente: prefs.defFuente || st.config.fuentes[0], maestro: st.maestro, docs: st.docs, abonos: st.abonos, nominas: st.nominas });
+  if (!p.error && fuenteReg.has(r.archivo)) p.fuente = fuenteReg.get(r.archivo);
+  return p;
+};
+function htmlRegistrar(r, k) {
+  const p = prepRegistro(r);
+  if (p.error) return `<p class="hint" style="margin:6px 0 0"><span class="tag err">No está en la bitácora</span> ${esc(r.error)} ${esc(p.error)}</p>`;
+  const opciones = [...new Set([...st.config.fuentes, p.fuente])].map(f => `<option${f === p.fuente ? " selected" : ""}>${esc(f)}</option>`).join("");
+  const est = [p.resumen.pagados ? `${p.resumen.pagados} pagado${p.resumen.pagados > 1 ? "s" : ""}` : "", p.resumen.rechazados ? `${p.resumen.rechazados} rechazado${p.resumen.rechazados > 1 ? "s" : ""}` : "", p.resumen.pendientes ? `${p.resumen.pendientes} en proceso` : ""].filter(Boolean).join(", ");
+  const filas = p.pagos.map(x => `<tr><td class="mono">${esc(fmtRut(x.rut))}</td><td>${esc(x.nombreBanco || x.nombre)}</td><td class="num">${x.docs.length}</td><td class="num">${money(x.monto)}</td><td><span class="tag ${x.estado === "pagado" ? "okk" : x.estado === "rechazado" ? "err" : "neu"}">${esc(EST_PAGO[x.estado] || x.estado)}</span>${x.motivo ? ` <span class="hint">${esc(x.motivo)}</span>` : ""}</td></tr>`).join("");
+  const avisos = p.avisos.length ? `<ul class="hint" style="margin:8px 0 0;padding-left:18px">${p.avisos.map(a => `<li>${esc(a)}</li>`).join("")}</ul>` : "";
+  return `<p class="hint" style="margin:4px 0 0"><span class="tag wrn">No está en la bitácora</span> ${esc(r.error)} Si se subió a BancoEstado fuera del panel, se puede registrar con sus pagos y estados:
+      <b>${esc(p.archivo)}</b> · ${p.tipo === "abonos" ? "Remuneraciones " + esc(p.concepto) : "Proveedores"} · ${p.pagos.length} pago${p.pagos.length > 1 ? "s" : ""}, ${p.resumen.documentos} documento${p.resumen.documentos > 1 ? "s" : ""} · ${money(p.total)} · ${est} · pago ${esc(fmtISO(p.datosCarga.fechaPago))}.
+      ${p.cruzados ? `<b>${p.cruzados} ${p.tipo === "abonos" ? "abono" : "documento"}${p.cruzados > 1 ? "s" : ""} pendiente${p.cruzados > 1 ? "s" : ""}</b> del panel ${p.cruzados > 1 ? "están" : "está"} en este archivo: deja${p.cruzados > 1 ? "n" : ""} de estar pendiente${p.cruzados > 1 ? "s" : ""} y pasa${p.cruzados > 1 ? "n" : ""} a esta nómina.` : `Ningún ${p.tipo === "abonos" ? "abono" : "documento"} pendiente del panel está en este archivo.`}</p>
+    <div class="tablebox"><table><thead><tr><th>RUT</th><th>Beneficiario</th><th style="text-align:right">Docs</th><th style="text-align:right">Monto</th><th>Estado en el banco</th></tr></thead><tbody>${filas}</tbody></table></div>${avisos}
+    <div class="row"><label>Fuente <select data-reg-fuente="${esc(r.archivo)}">${opciones}</select></label><button class="btn primary" data-reg="${k}">Registrar en la bitácora</button></div>`;
+}
+
 async function leerReportes(files) {
   const lecturas = [];
   for (const f of files) {
@@ -251,13 +273,16 @@ function renderConciliacion() {
   const res = repartir(conc, st.nominas);
   const total = res.reduce((a, r) => a + (r.cambios ? r.cambios.length : 0), 0);
   // Datos para el Detalle de Nómina: nombre de la nómina, convenio, y nombre y forma de cada pago como los escribe el banco.
-  const metaDe = r => ({ convenio: S(r.rep && r.rep.convenio), nombreNomina: S(r.rep && r.rep.nombreNomina), detalle: r.detalle || [] });
+  const metaDe = r => ({ convenio: S(r.rep && r.rep.convenio), nombreNomina: S(r.rep && r.rep.nombreNomina), conceptoPago: S(r.rep && r.rep.conceptoPago), detalle: r.detalle || [] });
   // Solo de un archivo que calza entero (sin avisos) o junto con resultados nuevos.
-  const datosNuevos = r => { if (r.error || !r.nomina || ((r.avisos || []).length > (r.reintegrados || 0) && !(r.cambios || []).length)) return 0; const m = metaDe(r); return m.detalle.length + ((m.convenio && m.convenio !== S(r.nomina.convenioBanco)) || (m.nombreNomina && m.nombreNomina !== S(r.nomina.nombreBanco)) ? 1 : 0) };
+  const datosNuevos = r => { if (r.error || !r.nomina || ((r.avisos || []).length > (r.reintegrados || 0) && !(r.cambios || []).length)) return 0; const m = metaDe(r); return m.detalle.length + ((m.convenio && m.convenio !== S(r.nomina.convenioBanco)) || (m.nombreNomina && m.nombreNomina !== S(r.nomina.nombreBanco)) || (m.conceptoPago && m.conceptoPago !== S(r.nomina.conceptoBanco)) ? 1 : 0) };
   const extra = res.reduce((a, r) => a + datosNuevos(r), 0);
 
   const bloques = res.map((r, k) => {
     const cab = `<div class="row" style="margin-top:0;justify-content:space-between"><b>${esc(r.archivo)}</b>${r.rep && r.rep.operacion ? `<span class="hint">BancoEstado N° ${esc(r.rep.operacion)}${r.rep.estadoNomina ? " · " + esc(r.rep.estadoNomina) : ""}</span>` : ""}</div>`;
+    // Recién registrada: hasta que llegue la nómina no se ofrece de nuevo (no se duplica).
+    if (r.sinNomina && registradas.has(r.rep.operacion)) return `<div class="conc">${cab}<p class="hint" style="margin:6px 0 0"><span class="tag okk">Registrada</span> Actualizando la bitácora…</p></div>`;
+    if (r.sinNomina) return `<div class="conc">${cab}${htmlRegistrar(r, k)}</div>`;
     if (r.error) return `<div class="conc">${cab}<p class="hint" style="margin:6px 0 0"><span class="tag err">No se pudo usar</span> ${esc(r.error)}</p></div>`;
     const n = r.nomina, s = status(n);
     const filas = (r.cambios || []).map(c => `<tr><td class="mono">${esc(fmtRut(c.rut))}</td><td>${esc(c.nombre)}</td><td class="num">${money(c.monto)}</td><td><span class="tag ${c.estado === "pagado" ? "okk" : "err"}">${esc(EST_PAGO[c.estado] || c.estado)}</span>${c.cobro !== undefined ? ` <span class="hint">por cobrar en banco</span>` : ""}</td><td>${esc(c.motivo)}</td></tr>`).join("");
@@ -267,7 +292,8 @@ function renderConciliacion() {
     const dat = datosNuevos(r) ? `<p class="hint" style="margin:8px 0 0">Se guardan como los escribe el banco, para emitir el Detalle de Nómina igual: ${[
       (metaDe(r).nombreNomina && metaDe(r).nombreNomina !== S(n.nombreBanco)) ? `nombre de la nómina <b>${esc(metaDe(r).nombreNomina)}</b>` : "",
       (metaDe(r).convenio && metaDe(r).convenio !== S(n.convenioBanco)) ? "convenio" : "",
-      r.detalle.length ? `nombre y forma de pago de ${r.detalle.length} beneficiario${r.detalle.length > 1 ? "s" : ""}` : ""].filter(Boolean).join(", ")}.</p>` : "";
+      (metaDe(r).conceptoPago && metaDe(r).conceptoPago !== S(n.conceptoBanco)) ? "concepto de pago" : "",
+      r.detalle.length ? `nombre, banco y forma de pago de ${r.detalle.length} beneficiario${r.detalle.length > 1 ? "s" : ""}` : ""].filter(Boolean).join(", ")}.</p>` : "";
     const nada = !filas && !ya && !dat ? `<p class="hint" style="margin:6px 0 0">Nada que registrar desde este archivo.</p>` : "";
     return `<div class="conc">${cab}<p class="hint" style="margin:4px 0 0">Nómina <a data-conc-go="${esc(n.id)}">N° ${n.num}</a> · ${esc(n.fuente)} · ${esAbonos(n) ? "Remuneraciones" : "Proveedores"} · <span class="tag ${s.c}">${esc(s.t)}</span></p>${tabla}${ya}${dat}${avisos}${nada}</div>`;
   }).join("");
@@ -277,6 +303,20 @@ function renderConciliacion() {
     ${bloques}
     <div class="row">${total ? `<button class="btn primary" id="concAplicar">Registrar ${total} resultado${total > 1 ? "s" : ""}</button>` : extra ? `<button class="btn primary" id="concAplicar">Guardar los datos del banco</button>` : `<span class="hint">No hay resultados nuevos que registrar.</span>`}<button class="btn" id="concCancelar">Cancelar</button></div>`;
 
+  // Nóminas que no están en la bitácora: se registran desde el archivo, con su fuente elegida.
+  box.querySelectorAll("[data-reg-fuente]").forEach(sel => sel.onchange = () => { fuenteReg.set(sel.dataset.regFuente, sel.value) });
+  box.querySelectorAll("[data-reg]").forEach(b => b.onclick = () => accion(b, async () => {
+    const r = res[+b.dataset.reg], prep = prepRegistro(r);
+    if (prep.error) { toast(prep.error); return }
+    try {
+      registradas.add(r.rep.operacion);
+      let n;
+      try { n = await registrarNominaBanco(prep, r.archivo) } catch (e) { registradas.delete(r.rep.operacion); throw e }
+      toast(`Nómina BancoEstado N° ${prep.datosCarga.operacion} registrada en la bitácora como N° ${n.num}` + (prep.cruzados ? `; ${prep.cruzados} pendiente${prep.cruzados > 1 ? "s" : ""} pasa${prep.cruzados > 1 ? "n" : ""} a ella` : ""));
+      // El archivo ya tiene su nómina: se vuelve a comparar (queda "ya registrado así").
+      renderConciliacion();
+    } catch (e) { toast("No se pudo registrar la nómina: " + mensajeError(e)) }
+  }));
   $("concCerrar").onclick = cerrarConciliacion;
   $("concCancelar").onclick = cerrarConciliacion;
   box.querySelectorAll("[data-conc-go]").forEach(a => a.onclick = () => { openNom = a.dataset.concGo; renderBit(); $("hDetail").scrollIntoView({ behavior: "smooth", block: "start" }) });

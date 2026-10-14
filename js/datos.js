@@ -455,16 +455,19 @@ export const aplicarResultadosBanco = (id, resultados, archivo, meta = {}) => mo
   (meta.detalle || []).forEach(d => {
     const p = pagos.find(x => x.rut === d.rut && x.monto === d.monto); if (!p) return;
     const nombre = S(d.nombre) && S(d.nombre) !== S(p.nombre) ? S(d.nombre) : "", forma = S(d.forma);
-    if (S(p.nombreBanco) === nombre && S(p.formaBanco) === forma) return;
+    const banco = S(d.banco);
+    if (S(p.nombreBanco) === nombre && S(p.formaBanco) === forma && S(p.bancoBanco) === banco) return;
     if (nombre) p.nombreBanco = nombre; else delete p.nombreBanco;
     if (forma) p.formaBanco = forma; else delete p.formaBanco;
+    if (banco) p.bancoBanco = banco; else delete p.bancoBanco;
     nDetalle++;
   });
   const datosBanco = nDetalle ? { pagos } : {};
   if (S(meta.convenio) && S(meta.convenio) !== S(n.convenioBanco)) datosBanco.convenioBanco = S(meta.convenio);
   if (S(meta.nombreNomina) && S(meta.nombreNomina) !== S(n.nombreBanco)) datosBanco.nombreBanco = S(meta.nombreNomina);
+  if (S(meta.conceptoPago) && S(meta.conceptoPago) !== S(n.conceptoBanco)) datosBanco.conceptoBanco = S(meta.conceptoPago);
   if (!hechos.length) return { cambios: datosBanco, salida: { aplicados: 0, detalle: nDetalle, omitidos },
-    hist: Object.keys(datosBanco).length ? [hist("datos del banco", refN(n), `Del reporte de BancoEstado${archivo ? ", archivo " + archivo : ""}, para el Detalle de Nómina: ${[datosBanco.nombreBanco ? "nombre " + datosBanco.nombreBanco : "", datosBanco.convenioBanco ? "convenio" : "", nDetalle ? `nombre y forma de pago de ${nDetalle} beneficiario${nDetalle > 1 ? "s" : ""}` : ""].filter(Boolean).join(", ")}`, { nombreBanco: S(n.nombreBanco) }, { nombreBanco: S(datosBanco.nombreBanco || n.nombreBanco) })] : [] };
+    hist: Object.keys(datosBanco).length ? [hist("datos del banco", refN(n), `Del reporte de BancoEstado${archivo ? ", archivo " + archivo : ""}, para el Detalle de Nómina: ${[datosBanco.nombreBanco ? "nombre " + datosBanco.nombreBanco : "", datosBanco.convenioBanco ? "convenio" : "", datosBanco.conceptoBanco ? "concepto " + datosBanco.conceptoBanco : "", nDetalle ? `nombre, banco y forma de pago de ${nDetalle} beneficiario${nDetalle > 1 ? "s" : ""}` : ""].filter(Boolean).join(", ")}`, { nombreBanco: S(n.nombreBanco) }, { nombreBanco: S(datosBanco.nombreBanco || n.nombreBanco) })] : [] };
   const pgd = hechos.filter(h => h.p.estado === "pagado"), rch = hechos.filter(h => h.p.estado === "rechazado");
   const suma = l => money(l.reduce((s, h) => s + h.p.monto, 0));
   const resumen = [pgd.length ? `${pgd.length} pagado${pgd.length > 1 ? "s" : ""} (${suma(pgd)})` : "",
@@ -552,6 +555,44 @@ export const registrarTransferencia = t => conReintento(al => runTransaction(db,
   tx.set(refHist(), hist("registrar transferencia", "nomina:" + num, `Transferencia N° ${nomina.operacion} (registro ${num}) del ${fmtISO(t.fecha)}${t.hora ? " " + t.hora : ""}, ${t.fuente}: ${fmtRut(b.rut)} ${nomina.pagos[0].nombre}, ${money(t.monto)}${que}. ${nomina.concepto}${t.pdf ? `. Leída del PDF ${S(t.pdf)}` : ""}`, null, { operacion: nomina.operacion, idTef: nomina.idTef, total: t.monto, origen: t.origen, tipo: "transferencia" }));
   return nomina;
 }));
+
+// Nómina pagada en BancoEstado que no está en la bitácora (se subió fuera del
+// panel), armada por nominaDesdeReporte() desde su Detalle de Nómina. Toma el
+// correlativo, nace generada con los pagos y sus estados del banco, saca de
+// pendientes lo que se cruzó y luego se marca cargada con los datos del banco
+// (las reglas solo dejan nacer generada una nómina que no es transferencia).
+export async function registrarNominaBanco(r, archivoExcel) {
+  const nomina = await conReintento(al => runTransaction(db, async tx => {
+    const cSnap = await tx.get(refContador());
+    const num = cSnap.exists() ? cSnap.data().nextNum : 1;
+    al(num);
+    const nRef = doc(db, C.nom, String(num));
+    const [nSnap, dSnaps, aSnaps] = await Promise.all([tx.get(nRef),
+      Promise.all(r.consumir.docs.map(id => tx.get(refDoc(id)))), Promise.all(r.consumir.abonos.map(id => tx.get(refAbono(id))))]);
+    if (nSnap.exists()) throw new Conflicto(`La nómina N° ${num} ya existe. Recarga la página e inténtalo de nuevo.`);
+    const movidos = [...dSnaps, ...aSnaps].filter(s => !s.exists()).length;
+    if (movidos) throw new Conflicto(`${movidos} pendiente${movidos > 1 ? "s" : ""} del archivo ya no está${movidos > 1 ? "n" : ""} (otro usuario lo movió, quitó o incluyó en otra nómina). No se registró; vuelve a cargar el archivo.`);
+    const n = {
+      num, ...(r.tipo === "abonos" ? { tipo: "abonos", concepto: r.concepto } : {}), fuente: r.fuente, archivo: r.archivo, estado: "generada", desdeBanco: true,
+      creadaAt: serverTimestamp(), creadaPor: st.email,
+      // Con su N° BancoEstado desde ya: si marcarla cargada fallara, el archivo la encuentra y no se duplica.
+      fechaCarga: "", fechaPago: "", operacion: r.datosCarga.operacion, obs: "", total: r.total,
+      lineas: r.lineas.map(l => ({ tipo: l.tipo, f: [...l.f] })),
+      pagos: r.pagos.map(p => ({ ...p, docs: p.docs.map(d => ({ ...d })) })),
+      ...f()
+    };
+    if (cSnap.exists()) tx.update(refContador(), { nextNum: num + 1, ...f() });
+    else tx.set(refContador(), { nextNum: num + 1, ...f() });
+    tx.set(nRef, n);
+    r.consumir.docs.forEach(id => tx.delete(refDoc(id)));
+    r.consumir.abonos.forEach(id => tx.delete(refAbono(id)));
+    const cruce = r.cruzados ? `; ${r.cruzados} ${r.tipo === "abonos" ? "abono" : "documento"}${r.cruzados > 1 ? "s" : ""} pendiente${r.cruzados > 1 ? "s" : ""} pasa${r.cruzados > 1 ? "n" : ""} a esta nómina` : "";
+    tx.set(refHist(), hist("registrar nómina del banco", "nomina:" + num, `N° ${num} ${r.tipo === "abonos" ? "remuneraciones " + r.concepto + " " : ""}${r.fuente}: nómina BancoEstado N° ${r.datosCarga.operacion} (${r.archivo}) desde su Detalle de Nómina${archivoExcel ? " " + archivoExcel : ""}, ${r.pagos.length} pagos, ${r.resumen.documentos} documentos, total ${money(r.total)}: ${r.resumen.pagados} pagados, ${r.resumen.rechazados} rechazados${r.resumen.pendientes ? ", " + r.resumen.pendientes + " en proceso" : ""}${cruce}`, null, { operacion: r.datosCarga.operacion, total: r.total, pagos: r.pagos.length, cruzados: r.cruzados, tipo: r.tipo }));
+    return n;
+  }));
+  await cargarNomina(String(nomina.num), r.datosCarga);
+  return nomina;
+}
 
 // Datos de la transferencia que se pueden corregir después de registrarla.
 const CAMPOS_TEF = { operacion: "N° de transferencia", idTef: "ID TEF", horaTef: "hora", concepto: "concepto", mensaje: "mensaje", preparo: "preparó", autorizo: "autorizó", obs: "observación" };

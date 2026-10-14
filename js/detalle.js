@@ -15,7 +15,7 @@ import { S, fmtRut, cleanName, tipoDe, esCobroCaja } from "./formato.js";
 // en archivos reales; el resto, el nombre oficial del banco).
 const NOMBRE_BANCO = {
   "012": "BANCOESTADO", "001": "BANCO DE CHILE", "016": "BANCO DE CREDITO E INVERSIONES", "037": "BANCO SANTANDER-CHILE", "028": "BANCO BICE",
-  "039": "BANCO ITAU CHILE", "014": "SCOTIABANK CHILE", "049": "BANCO SECURITY", "051": "BANCO FALABELLA", "053": "BANCO RIPLEY",
+  "039": "BANCO ITAU CHILE", "014": "SCOTIABANK SUD AMERICANO", "049": "BANCO SECURITY", "051": "BANCO FALABELLA", "053": "BANCO RIPLEY",
   "055": "BANCO CONSORCIO", "009": "BANCO INTERNACIONAL", "031": "HSBC BANK (CHILE)", "041": "JP MORGAN CHASE BANK, N. A.", "672": "COOPEUCH"
 };
 export const bancoDetalle = (codigo, catalogo = {}) => NOMBRE_BANCO[codigo] || S(catalogo[codigo]).split(" / ")[0] || S(codigo);
@@ -74,8 +74,9 @@ export function fechaEncabezado(d) {
 // la línea 1 del archivo (["1", rut, nombre, email, banco, forma, cuenta, …]).
 const formaPago = (n, p) => S(p.forma) || S(((n.lineas || []).find(l => +l.tipo === 1 && l.f && l.f[1] === p.rut && S(l.f[6]) === S(p.cuenta)) || { f: [] }).f[5]);
 
-// Al cargar el reporte del banco se guarda en el pago el nombre y la forma como
-// los escribe el banco (nombreBanco, formaBanco); si no, salen los del panel.
+// Al cargar el reporte del banco se guarda en el pago el nombre, la forma y el
+// banco como los escribe el banco (nombreBanco, formaBanco, bancoBanco), y en la
+// nómina su "Concepto Pago" (conceptoBanco); si no, salen los del panel.
 const nombreBancoDe = p => S(p.nombreBanco) || S(p.nombre);
 const formaBancoDe = (n, p) => S(p.formaBanco) || formaDetalle(formaPago(n, p));
 
@@ -87,12 +88,12 @@ export function filasDetalle(n, { convenio = "", nombreBanco = "", ahora = new D
   if (abonos) {
     filas.push(["Rut", "Nombre", "Fecha Abono", "Forma Abono", "Banco", "Código Propio", "N° Cuenta", "Estado Abono", "Motivo", "Monto Abono"]);
     // En esta vista el nombre sale tal como se subió (sin los dos espacios de Ver Documentos).
-    n.pagos.forEach(p => filas.push([fmtRut(p.rut), nombreBancoDe(p), ddmmaaaa(n.fechaPago || n.fechaCarga), formaBancoDe(n, p), bancoDetalle(p.banco, catalogoBancos), "",
+    n.pagos.forEach(p => filas.push([fmtRut(p.rut), nombreBancoDe(p), ddmmaaaa(n.fechaPago || n.fechaCarga), formaBancoDe(n, p), (S(p.bancoBanco) || bancoDetalle(p.banco, catalogoBancos)), "",
       FORMAS_SIN_CUENTA.has(p.forma) ? "" : S(p.cuenta), estadoBanco(n, p), motivoBanco(p), pesos(p.monto)]));
   } else {
     filas.push(["Rut", "Nombre", "Centro Negocio", "Tipo Abono", "Banco", "Monto Total $", "Estado", "Motivo", "N° Documento", "Tipo Documento", "Fecha Emisión", "Monto $"]);
     // El banco cuenta cada documento como un pago: "Monto Total $" es el del documento.
-    n.pagos.forEach(p => p.docs.forEach(d => filas.push([fmtRut(p.rut), nombreBancoDe(p) + "  ", "", formaBancoDe(n, p), bancoDetalle(p.banco, catalogoBancos), pesos(d.monto), estadoBanco(n, p), motivoBanco(p),
+    n.pagos.forEach(p => p.docs.forEach(d => filas.push([fmtRut(p.rut), nombreBancoDe(p) + "  ", "", formaBancoDe(n, p), (S(p.bancoBanco) || bancoDetalle(p.banco, catalogoBancos)), pesos(d.monto), estadoBanco(n, p), motivoBanco(p),
       /^\d{1,15}$/.test(S(d.ndoc)) ? Number(d.ndoc) : S(d.ndoc), tipoDocDetalle(d.tipo), fechaDoc(d.fecha), pesos(d.monto)])));
   }
   const datos = filas.slice(1);
@@ -105,7 +106,7 @@ export function filasDetalle(n, { convenio = "", nombreBanco = "", ahora = new D
       ["Convenio", S(convenio) + "\t", "Nº Nómina", /^\d+$/.test(S(n.operacion)) ? Number(n.operacion) : S(n.operacion)],
       ["Nombre Nómina", S(nombreBanco), "Monto Total $", pesosTotal(n.total)],
       ["Cantidad Pagos", String(datos.length), "Fecha Pago", ddmmaaaa(n.fechaPago || n.fechaCarga)],
-      ["Concepto Pago", conceptoDetalle(n), "Estado Nómina Pagos", estadoNomina],
+      ["Concepto Pago", S(n.conceptoBanco) || conceptoDetalle(n), "Estado Nómina Pagos", estadoNomina],
     ],
     filas, estadoNomina
   };

@@ -19,11 +19,11 @@ const llave = v => S(v).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
 const RX = {
   rut: /^rut$/, nombre: /^nombre$/, monto: /^monto (abono|total)/, estado: /^estado( abono)?$/,
   motivo: /^motivo$/, cuenta: /^n cuenta$/, banco: /^banco$/, forma: /^(forma|tipo) abono$/,
-  ndoc: /^n documento$/, tipodoc: /^tipo documento$/, montodoc: /^monto \$$/
+  ndoc: /^n documento$/, tipodoc: /^tipo documento$/, montodoc: /^monto \$$/, fechadoc: /^fecha emision$/
 };
 // "Monto Abono"/"Monto Total" es lo que se abona al beneficiario; "Monto $" es
 // el de cada documento. El orden importa: gana la primera que calce.
-const ORDEN = ["rut", "nombre", "forma", "cuenta", "banco", "estado", "motivo", "ndoc", "tipodoc", "montodoc", "monto"];
+const ORDEN = ["rut", "nombre", "forma", "cuenta", "banco", "estado", "motivo", "ndoc", "tipodoc", "montodoc", "fechadoc", "monto"];
 
 // filas: matriz de celdas (XLSX.utils.sheet_to_json con header:1).
 export function leerReporteBanco(filas) {
@@ -49,7 +49,8 @@ export function leerReporteBanco(filas) {
   for (let i = hi + 1; i < filas.length; i++) {
     const g = k => k in map ? filas[i][map[k]] : "";
     const rut = normRut(g("rut")); if (!rut) continue;
-    pagos.push({ rut, nombre: S(g("nombre")), forma: S(g("forma")), monto: parseMonto(g("monto")), estado: S(g("estado")), motivo: S(g("motivo")) });
+    pagos.push({ rut, nombre: S(g("nombre")), forma: S(g("forma")), monto: parseMonto(g("monto")), estado: S(g("estado")), motivo: S(g("motivo")),
+      banco: S(g("banco")), cuenta: S(g("cuenta")), ndoc: S(g("ndoc")), tipodoc: S(g("tipodoc")), montodoc: parseMonto(g("montodoc")), fechadoc: S(g("fechadoc")) });
   }
   const operacion = S(enc["n nomina"]);
   if (!operacion) return { ok: false, error: "El archivo no trae el N° de nómina de BancoEstado." };
@@ -57,8 +58,11 @@ export function leerReporteBanco(filas) {
   return {
     ok: true, operacion, convenio: S(enc["convenio"]), nombreNomina: S(enc["nombre nomina"]),
     montoTotal: parseMonto(enc["monto total $"]), cantidadPagos: parseInt(enc["cantidad pagos"], 10) || 0,
-    fechaPago: S(enc["fecha pago"]), estadoNomina: S(enc["estado nomina pagos"]),
-    porDocumento: "ndoc" in map, pagos
+    fechaPago: S(enc["fecha pago"]), estadoNomina: S(enc["estado nomina pagos"]), conceptoPago: S(enc["concepto pago"]),
+    porDocumento: "ndoc" in map, pagos,
+    // Vista del banco: proveedores por documento, remuneraciones (con N° de cuenta) o proveedores por pago.
+    vista: "ndoc" in map ? "documentos"
+      : /remuneraciones/.test(llave(filas[0] && filas[0][0])) || (filas[hi] || []).some(c => llave(c) === "fecha abono") ? "remuneraciones" : "pagos"
   };
 }
 
@@ -113,8 +117,8 @@ export function conciliar(rep, n) {
     // Por documento, "Monto Total $" es el de cada documento: el pago es la suma.
     const montoOk = isNaN(f.monto) || f.monto === p.monto || f.suma === p.monto;
     // Nombre y forma de pago como los escribe el banco, para emitir después el Detalle de Nómina igual.
-    if (montoOk && ((f.nombre && f.nombre !== S(p.nombreBanco || p.nombre)) || (f.forma && f.forma !== S(p.formaBanco))))
-      detalle.push({ rut: p.rut, monto: p.monto, nombre: f.nombre, forma: f.forma });
+    if (montoOk && ((f.nombre && f.nombre !== S(p.nombreBanco || p.nombre)) || (f.forma && f.forma !== S(p.formaBanco)) || (f.banco && f.banco !== S(p.bancoBanco))))
+      detalle.push({ rut: p.rut, monto: p.monto, nombre: f.nombre, forma: f.forma, banco: f.banco });
     // Un pago ya reintegrado a pendientes no se vuelve a tocar (no es un problema del archivo).
     if (p.reint) { avisos.push(`${quien}: ya se reintegró a pendientes; no se modifica.`); reintegrados++; return }
     if (!montoOk) {
@@ -150,7 +154,7 @@ export function repartir(lecturas, nominas) {
     if (!rep.ok) return { archivo, error: rep.error };
     // Las transferencias electrónicas llevan su propio N° de transferencia en el mismo campo: no cuentan.
     const cands = nominas.filter(n => S(n.operacion) === S(rep.operacion) && n.estado !== "anulada" && tipoDe(n) !== "transferencia");
-    if (!cands.length) return { archivo, rep, error: `Ninguna nómina de la bitácora tiene el N° BancoEstado ${rep.operacion}.` };
+    if (!cands.length) return { archivo, rep, sinNomina: true, error: `Ninguna nómina de la bitácora tiene el N° BancoEstado ${rep.operacion}.` };
     if (cands.length > 1) return { archivo, rep, error: `Hay ${cands.length} nóminas con el N° BancoEstado ${rep.operacion} (N° ${cands.map(n => n.num).join(", N° ")}); regístralas a mano.` };
     const n = cands[0];
     return { archivo, rep, nomina: n, ...conciliar(rep, n) };
