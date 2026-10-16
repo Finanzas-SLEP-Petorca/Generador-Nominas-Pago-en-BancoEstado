@@ -138,8 +138,12 @@
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['cargadaAt'])
             || request.resource.data.cargadaAt == null
             || request.resource.data.cargadaAt == request.time)
+        // La fuente se puede corregir (el panel lo deja en el historial), sola: sin cambiar de estado en el mismo paso.
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['fuente'])
+            || (request.resource.data.estado == resource.data.estado
+                && request.resource.data.fuente is string && request.resource.data.fuente.size() > 0))
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(
-             ['num', 'fuente', 'archivo', 'total', 'lineas', 'creadaAt', 'creadaPor']);
+             ['num', 'archivo', 'total', 'lineas', 'creadaAt', 'creadaPor']);
       allow delete: if false;
     }
 

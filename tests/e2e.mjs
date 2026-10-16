@@ -223,6 +223,17 @@ try {
   // ---------- paso 4: carga, resultado, rechazo y reintegro ----------
   await A.click('.steps button[data-step="4"]');
   await A.click('#tbBit tr[data-id="1"]');
+  // Mientras está generada se puede corregir la fuente (queda en el historial); se vuelve a la original.
+  {
+    const original = await A.inputValue("#nFuente");
+    const otra = await A.$eval("#nFuente", (s, o) => [...s.options].map(x => x.value).find(v => v !== o), original);
+    await A.selectOption("#nFuente", otra); await A.click("#nFuenteBtn");
+    await esperar(A, o => /fuente /.test(document.getElementById("toast").textContent) && document.getElementById("nFuente").value === o, otra);
+    await esperar(A, () => [...document.querySelectorAll("#nHist li b")].some(b => b.textContent === "cambiar fuente"));
+    await A.selectOption("#nFuente", original); await A.click("#nFuenteBtn");
+    await esperar(A, o => document.getElementById("nFuente").value === o && document.querySelector('#tbBit tr[data-id="1"]').textContent.includes(o), original);
+    log("nómina generada: corregir la fuente", original, "→", otra, "→", original, "(queda en el historial)");
+  }
   // Fecha de pago: por defecto el día hábil siguiente a la carga; no puede ser anterior a la carga.
   // Fechas calculadas desde hoy: un viernes futuro para la carga y su lunes para el pago.
   const iso = d => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");

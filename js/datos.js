@@ -512,6 +512,15 @@ export const volverPendientes = (id, i) => modificarNomina(id, n => {
     hist: [hist(dev ? "reintegrar pago no cobrado" : "reintegrar pago rechazado", refN(n), `${p.docs.length} ${que}${p.docs.length > 1 ? "s" : ""} de ${fmtRut(p.rut)} ${p.nombre} vuelven a pendientes (${money(p.monto)})`, { estado: p.estado, motivo: p.motivo, cobro: p.cobro || "", reint: "" }, { reint: p.reint })]
   };
 });
+// Corrige la fuente de financiamiento de una nómina generada o cargada (queda en
+// el historial). Lo que vuelva a pendientes desde ella vuelve con esta fuente.
+export const cambiarFuente = (id, fuente) => modificarNomina(id, n => {
+  if (tipoDe(n) === "transferencia") throw new Conflicto("Una transferencia no cambia de fuente aquí");
+  const nueva = S(fuente);
+  if (!nueva) throw new Conflicto("Elige la fuente");
+  if (nueva === n.fuente) return { cambios: {} };
+  return { cambios: { fuente: nueva }, hist: [hist("cambiar fuente", refN(n), `Fuente ${n.fuente} → ${nueva}`, { fuente: n.fuente }, { fuente: nueva })] };
+});
 export const anularNomina = id => modificarNomina(id, n => {
   const tef = tipoDe(n) === "transferencia";
   if (!tef && n.estado !== "generada") throw new Conflicto("Solo se anula una nómina que no se ha cargado en el banco");

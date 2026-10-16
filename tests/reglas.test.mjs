@@ -112,6 +112,17 @@ test("una nómina solo nace generada, con el número que reserva el contador", a
   await assertFails(b.commit());
 });
 
+test("la fuente de una nómina se corrige sola, sin cambiar de estado en el mismo paso", async () => {
+  const u = db(USUARIO);
+  const num = await generar(u, USUARIO);
+  const ref = doc(u, "pago_nominas/" + num);
+  await assertSucceeds(updateDoc(ref, { fuente: "PIE", ...firma(USUARIO) }));
+  await assertFails(updateDoc(ref, { fuente: "", ...firma(USUARIO) }));
+  await assertFails(updateDoc(ref, { fuente: "SEP", estado: "cargada", ...firma(USUARIO) }));
+  await assertSucceeds(updateDoc(ref, { estado: "cargada", cargadaPor: USUARIO, cargadaAt: serverTimestamp(), ...firma(USUARIO) }));
+  await assertSucceeds(updateDoc(ref, { fuente: "SEP", ...firma(USUARIO) }));               // ya cargada, también
+});
+
 test("una transferencia electrónica nace cargada, firmada por quien la registra, y se puede anular", async () => {
   const u = db(USUARIO);
   const tef = (num, extra = {}) => ({ num, tipo: "transferencia", fuente: "JUNJI", archivo: "", estado: "cargada", creadaAt: serverTimestamp(), creadaPor: USUARIO, cargadaPor: USUARIO, cargadaAt: serverTimestamp(), fechaCarga: "2026-09-30", fechaPago: "2026-09-30", operacion: "8800001", total: 250000, lineas: [], pagos: [], ...firma(USUARIO), ...extra });

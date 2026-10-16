@@ -6,7 +6,7 @@ import { bankWorkbook, abonosWorkbook, libroReporte, libroDetalle } from "../exc
 import { filasDetalle, partesDetalle, nombreDetalle, puedeDetalle } from "../detalle.js";
 import { pdfReporte, pdfNomina, cargarPdf } from "../pdf.js";
 import { M_FORMA_ABONO } from "../catalogos.js";
-import { st, aFecha, suscribirHistorial, cargarNomina, guardarCarga, deshacerCarga, resultadoPago, pagarPendientes, cobroPago, volverPendientes, anularNomina, editarTransferencia, aplicarResultadosBanco, registrarNominaBanco, exportarRespaldo } from "../datos.js";
+import { st, aFecha, suscribirHistorial, cargarNomina, guardarCarga, deshacerCarga, resultadoPago, pagarPendientes, cobroPago, volverPendientes, anularNomina, editarTransferencia, aplicarResultadosBanco, registrarNominaBanco, cambiarFuente, exportarRespaldo } from "../datos.js";
 import { leerArchivoBanco, repartir } from "../conciliar.js";
 import { nominaDesdeReporte } from "../registrar.js";
 import { cruzarMisNominas, barridoHojas, CATEGORIAS } from "../barrido.js";
@@ -399,6 +399,8 @@ function renderNomDetail() {
     <label title="El número que BancoEstado asigna a la nómina al cargarla. Sirve para buscarla después en el banco.">N° de nómina BancoEstado<input id="nOper" value="${esc(n.operacion)}" inputmode="numeric" placeholder="Ej. 1234567" ${anul ? "disabled" : ""}></label>
     <label title="El nombre que se le pone a la nómina al subirla a BancoEstado (Nombre Nómina en el Detalle del banco), ej. P02_PROVEEDORES_GENERAL.">Nombre de la nómina en BancoEstado<input id="nNomBanco" value="${esc(nomBancoDe(n))}" list="nNombres" placeholder="Ej. P02_PROVEEDORES_GENERAL" autocomplete="off" ${anul ? "disabled" : ""}></label>
     <datalist id="nNombres">${nombresBanco().map(v => `<option value="${esc(v)}"></option>`).join("")}</datalist>
+    ${!anul && tipoDe(n) !== "transferencia" ? `<label title="Si la nómina quedó con la fuente equivocada, elige la correcta y pulsa Cambiar; queda en el historial.">Fuente de financiamiento
+      <span class="row" style="margin:0;gap:6px;flex-wrap:nowrap"><select id="nFuente">${[...new Set([...st.config.fuentes, n.fuente])].map(f => `<option${f === n.fuente ? " selected" : ""}>${esc(f)}</option>`).join("")}</select><button class="btn small" id="nFuenteBtn">Cambiar</button></span></label>` : ""}
     <label class="wide">Observación<input id="nObs" value="${esc(n.obs)}" ${anul ? "disabled" : ""}></label>
     ${cargada ? `<label class="wide" title="Como aparece en “Convenio” en el Detalle de Nómina del banco: uno para proveedores y otro para remuneraciones. Viene elegido el del tipo de nómina.">Convenio BancoEstado
       <select id="nConvSel">${conveniosDe(n).map(c => `<option value="${esc(c)}"${c === convenioDe(n) ? " selected" : ""}>${esc(c)}</option>`).join("")}<option value="__otro"${convenioDe(n) ? "" : " selected"}>${conveniosDe(n).length ? "Otro… (escribirlo)" : "Escribir el convenio…"}</option></select>
@@ -502,6 +504,12 @@ function renderNomDetail() {
     catch (e) { toast("No se pudo armar el PDF: " + mensajeError(e)) }
   });
   if (q("nXlsx")) q("nXlsx").onclick = () => accion(q("nXlsx"), async () => { try { descargar(nombreNomina(n) + ".xlsx", await (esAbonos(n) ? abonosWorkbook : bankWorkbook)(n.lineas)) } catch (e) { toast("No se pudo armar el Excel: " + mensajeError(e)) } });
+  if (q("nFuenteBtn")) q("nFuenteBtn").onclick = () => accion(q("nFuenteBtn"), async () => {
+    const f = q("nFuente").value;
+    if (f === n.fuente) { toast("Elige otra fuente en la lista"); return }
+    if (!confirm(`¿Cambiar la fuente de la nómina N° ${n.num} de ${n.fuente} a ${f}?`)) return;
+    try { await cambiarFuente(n.id, f); toast(`Nómina N° ${n.num}: fuente ${f}`) } catch (e) { toast("No se pudo cambiar la fuente: " + mensajeError(e)) }
+  });
   if (q("nAnular")) q("nAnular").onclick = () => { if (!confirm(`¿Anular la nómina N° ${n.num}? Sus ${n.pagos.reduce((a, p) => a + p.docs.length, 0)} ${esAbonos(n) ? "abonos" : "documentos"} vuelven a pendientes. Hazlo solo si no se cargó en el banco.`)) return; accion(q("nAnular"), async () => { await anularNomina(n.id); toast(`Nómina anulada; ${esAbonos(n) ? "abonos de vuelta en la pestaña Remuneraciones" : "documentos de vuelta en pendientes"}`) }) };
   if (q("tGuardar")) q("tGuardar").onclick = () => {
     const d = { operacion: S(q("tOper").value), idTef: S(q("tIdTef").value), horaTef: q("tHoraD").value, concepto: S(q("tConceptoD").value), mensaje: S(q("tMensajeD").value), preparo: S(q("tPreparoD").value), autorizo: S(q("tAutorizoD").value), obs: S(q("tObsD").value) };
