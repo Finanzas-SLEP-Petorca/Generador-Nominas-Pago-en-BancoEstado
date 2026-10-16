@@ -608,6 +608,30 @@ export async function registrarNominaBanco(r, archivoExcel) {
   return nomina;
 }
 
+// Completa los folios de pagos registrados sin documentos (nómina antigua del banco) con
+// documentos pendientes, según planFolios(): en una transacción verifica que el pago siga sin
+// folio y los documentos sigan pendientes, los pasa a la nómina y los saca de pendientes.
+export const completarFolios = (id, plan) => runTransaction(db, async tx => {
+  const ref = doc(db, C.nom, id); const s = await tx.get(ref);
+  if (!s.exists()) throw new Conflicto("La nómina ya no existe");
+  const n = s.data();
+  if (n.estado === "anulada") throw new Conflicto(`La nómina N° ${n.num} está anulada`);
+  const ids = plan.pagos.flatMap(x => x.docs.map(d => d.docId));
+  const dSnaps = await Promise.all(ids.map(i => tx.get(refDoc(i))));
+  if (dSnaps.some(d => !d.exists())) throw new Conflicto("Algún documento ya no está pendiente (otro usuario lo movió). Vuelve a intentarlo.");
+  const pagos = n.pagos.map(p => ({ ...p }));
+  plan.pagos.forEach(x => {
+    const p = pagos[x.i];
+    if (!p || p.rut !== x.rut || p.monto !== x.monto || !p.docs.every(d => !S(d.ndoc))) throw new Conflicto("La nómina cambió mientras revisabas. Vuelve a intentarlo.");
+    p.docs = x.docs.map(d => ({ ...d }));
+  });
+  tx.update(ref, { pagos, ...f() });
+  ids.forEach(i => tx.delete(refDoc(i)));
+  tx.set(refHist(), hist("completar folios", refN(n), `${plan.pagos.length} pago${plan.pagos.length > 1 ? "s" : ""} sin folio con ${ids.length} documento${ids.length > 1 ? "s" : ""} pendiente${ids.length > 1 ? "s" : ""}: ` +
+    plan.pagos.map(x => `${fmtRut(x.rut)} ${money(x.monto)} → ${x.docs.map(d => d.ndoc).join(", ")}`).join("; "), null, { pagos: plan.pagos.length, documentos: ids.length }));
+  return { pagos: plan.pagos.length, documentos: ids.length };
+});
+
 // Datos de la transferencia que se pueden corregir después de registrarla.
 const CAMPOS_TEF = { operacion: "N° de transferencia", idTef: "ID TEF", horaTef: "hora", concepto: "concepto", mensaje: "mensaje", preparo: "preparó", autorizo: "autorizó", obs: "observación" };
 export const editarTransferencia = (id, datos) => modificarNomina(id, n => {

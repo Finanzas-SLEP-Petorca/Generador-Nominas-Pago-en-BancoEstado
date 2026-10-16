@@ -6,9 +6,9 @@ import { bankWorkbook, abonosWorkbook, libroReporte, libroDetalle } from "../exc
 import { filasDetalle, partesDetalle, nombreDetalle, puedeDetalle } from "../detalle.js";
 import { pdfReporte, pdfNomina, cargarPdf } from "../pdf.js";
 import { M_FORMA_ABONO } from "../catalogos.js";
-import { st, aFecha, suscribirHistorial, cargarNomina, guardarCarga, deshacerCarga, resultadoPago, pagarPendientes, cobroPago, volverPendientes, anularNomina, editarTransferencia, aplicarResultadosBanco, registrarNominaBanco, cambiarFuente, exportarRespaldo } from "../datos.js";
+import { st, aFecha, suscribirHistorial, cargarNomina, guardarCarga, deshacerCarga, resultadoPago, pagarPendientes, cobroPago, volverPendientes, anularNomina, editarTransferencia, aplicarResultadosBanco, registrarNominaBanco, cambiarFuente, completarFolios, exportarRespaldo } from "../datos.js";
 import { leerArchivoBanco, repartir } from "../conciliar.js";
-import { nominaDesdeReporte } from "../registrar.js";
+import { nominaDesdeReporte, sinFolio, planFolios } from "../registrar.js";
 import { cruzarMisNominas, barridoHojas, CATEGORIAS } from "../barrido.js";
 import { $, esc, toast, accion, descargar, prefs, guardarPrefs, mensajeError, go } from "./comun.js";
 import { fechaHora } from "./paso1.js";
@@ -407,7 +407,9 @@ function renderNomDetail() {
       <input id="nConvenio" value="${esc(convenioDe(n))}" placeholder="Ej. el que aparece en “Convenio” del Detalle del banco" autocomplete="off" ${convenioDe(n) ? "hidden" : ""} style="margin-top:6px"></label>` : ""}
   </div>
   ${due ? `<p class="hint" style="margin-top:8px">Resultado del banco disponible desde el ${fmtDue(due)} (${n.fechaPago ? "14:00 del día de pago de la nómina; si cae en día no hábil, del hábil siguiente" : "día hábil siguiente a la carga"}; considera los feriados de Configuración).</p>` : ""}
+  ${!anul && sinFolio(n) ? `<p class="hint" style="margin-top:8px"><span class="tag wrn">${sinFolio(n)} pago${sinFolio(n) > 1 ? "s" : ""} sin folio</span> El banco no informó sus documentos. Importa los documentos como pendientes (paso 1 o 2, <b>Importar archivo</b>) y pulsa <b>Completar folios</b>: se toman los del mismo proveedor que suman el monto de cada pago.</p>` : ""}
   <div class="row">
+    ${!anul && sinFolio(n) ? `<button class="btn primary" id="nFolios">Completar folios</button>` : ""}
     ${n.estado === "generada" ? `<button class="btn primary" id="nCargar">Marcar como cargada en BancoEstado</button>` : ""}
     ${cargada ? `<button class="btn" id="nGuardar">Guardar cambios</button>` : ""}
     ${cargada && pend ? `<button class="btn primary" id="nPagarRest">Marcar ${pend} pendiente${pend > 1 ? "s" : ""} como pagado${pend > 1 ? "s" : ""}</button>` : ""}
@@ -450,7 +452,7 @@ function renderNomDetail() {
     <tbody>${n.pagos.map((p, i) => `<tr>
       <td><span class="mono">${esc(fmtRut(p.rut))}</span><br>${esc(p.nombre)}</td>
       <td class="mono"${p.forma ? ` title="${esc(M_FORMA_ABONO[p.forma] || "")}"` : ""}>${esc(p.banco)}${p.forma ? " · " + esc(p.forma) + " ·" : ""} ${esc(p.cuenta) || "sin cuenta"}</td>
-      <td>${!conDocumentos(n) ? p.docs.map(d => `<span class="hint">${esc(d.concepto || n.concepto)}${d.glosa ? " · " + esc(d.glosa) : ""} ${money(d.monto)}</span>`).join("<br>") : p.docs.map(d => `<span class="mono">${esc(d.ndoc)}</span> <span class="hint">${esc((M_TIPO[d.tipo] || d.tipo))} ${money(d.monto)}${d.dc ? " · " + esc(d.dc) : ""}</span>`).join("<br>")}</td>
+      <td>${!conDocumentos(n) ? p.docs.map(d => `<span class="hint">${esc(d.concepto || n.concepto)}${d.glosa ? " · " + esc(d.glosa) : ""} ${money(d.monto)}</span>`).join("<br>") : p.docs.map(d => `${d.ndoc ? `<span class="mono">${esc(d.ndoc)}</span>` : `<span class="tag wrn">sin folio</span>`} <span class="hint">${esc((M_TIPO[d.tipo] || d.tipo))} ${money(d.monto)}${d.dc ? " · " + esc(d.dc) : ""}</span>`).join("<br>")}</td>
       <td class="num">${money(p.monto)}</td>
       <td><select class="inl" data-pe="${i}" ${cargada && !p.reint && !p.cobro ? "" : "disabled"}${p.cobro ? ` title="Vuelve el cobro a «Pendiente de cobro» para cambiar el resultado"` : ""} aria-label="Resultado">${Object.entries(EST_PAGO).map(([k, t]) => `<option value="${k}"${p.estado === k ? " selected" : ""}>${t}</option>`).join("")}</select></td>
       <td>${p.estado === "rechazado" ? `<input class="inl" data-pm="${i}" value="${esc(p.motivo)}" placeholder="Ej. cuenta inexistente" ${cargada ? "" : "disabled"}>` : ""}${conCobro && p.estado === "rechazado" ? reintegro(p, i) : ""}</td>
@@ -504,6 +506,15 @@ function renderNomDetail() {
     catch (e) { toast("No se pudo armar el PDF: " + mensajeError(e)) }
   });
   if (q("nXlsx")) q("nXlsx").onclick = () => accion(q("nXlsx"), async () => { try { descargar(nombreNomina(n) + ".xlsx", await (esAbonos(n) ? abonosWorkbook : bankWorkbook)(n.lineas)) } catch (e) { toast("No se pudo armar el Excel: " + mensajeError(e)) } });
+  if (q("nFolios")) q("nFolios").onclick = () => accion(q("nFolios"), async () => {
+    const plan = planFolios(n, st.docs);
+    if (!plan.pagos.length) { toast(`Ningún documento pendiente calza con los ${plan.sinFolio} pagos sin folio (mismo proveedor y que sumen el monto del pago). Impórtalos primero con Importar archivo.`); return }
+    const nDocs = plan.pagos.reduce((a, x) => a + x.docs.length, 0);
+    if (!confirm(`Completar los folios de ${plan.pagos.length} de ${plan.sinFolio} pagos sin folio con ${nDocs} documento${nDocs > 1 ? "s" : ""} pendiente${nDocs > 1 ? "s" : ""} (dejan de estar pendientes y quedan en esta nómina):\n\n` +
+      plan.pagos.map(x => `${fmtRut(x.rut)} ${x.nombre} ${money(x.monto)} → ${x.docs.map(d => d.ndoc).join(", ")}`).join("\n") + (plan.avisos.length ? "\n\n" + plan.avisos.join("\n") : ""))) return;
+    try { const r = await completarFolios(n.id, plan); toast(`Folios completados: ${r.pagos} pago${r.pagos > 1 ? "s" : ""} con ${r.documentos} documento${r.documentos > 1 ? "s" : ""}` + (plan.sinFolio - r.pagos ? `; quedan ${plan.sinFolio - r.pagos} sin folio` : "")) }
+    catch (e) { toast("No se pudieron completar los folios: " + mensajeError(e)) }
+  });
   if (q("nFuenteBtn")) q("nFuenteBtn").onclick = () => accion(q("nFuenteBtn"), async () => {
     const f = q("nFuente").value;
     if (f === n.fuente) { toast("Elige otra fuente en la lista"); return }

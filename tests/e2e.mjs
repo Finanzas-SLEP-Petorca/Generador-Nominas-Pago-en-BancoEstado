@@ -448,6 +448,42 @@ try {
     assert.deepEqual(XLSX.read(bx.bytes, { type: "buffer" }).SheetNames, ["Barrido", "Solo en la bitácora"]);
     await A.click("#concCerrar");
     log("barrido con Mis Nóminas: cuáles faltan en la bitácora, cuáles están al día y cuáles no se pagaron; descarga en Excel");
+
+    // Nómina antigua: el banco la entrega en Ver Nómina, sin documentos. Se registra sin folio y
+    // después, con el documento importado como pendiente, "Completar folios" se lo pone.
+    const vieja = [["Mis Nóminas - Ver Nómina"], [], ["Fecha : Oct 16, 2026, 3:03:47 PM"], [], ["Detalle Nómina"],
+      ["Convenio", "SLEP EJEMPLO PROVEEDORES(PROV-000)\t", "Nº Nómina", 9900010], ["Nombre Nómina", "PAGO_P01_PROVEEDORES", "Monto Total $", "$8.800"],
+      ["Cantidad Pagos", "1", "Fecha Pago", "06/08/2026"], ["Concepto Pago", "Proveedores", "Estado Nómina Pagos", "Aceptada"], [],
+      ["Rut", "Nombre", "Forma Abono", "N° Cuenta", "Banco", "Código Propio", "Monto Abono", "Cantidad Documentos", "Estado Abono", "Motivo"],
+      [rutFmt, "COMERCIAL UNO LIMITADA", "Abono en Cuenta Corriente / Cuenta Vista", 11111111, "BANCO SANTANDER-CHILE", "", "$ 8.800", "0", "Pagado", ""]];
+    const wbV = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wbV, XLSX.utils.aoa_to_sheet(vieja), "DetalleNomina");
+    await A.setInputFiles("#fReporteBanco", { name: "vieja.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from(XLSX.write(wbV, { type: "buffer", bookType: "xlsx" })) });
+    await esperar(A, () => !!document.querySelector("[data-reg]"));
+    assert.match(await A.textContent("#cardConciliar"), /1 pago sin folio/);
+    await A.click("[data-reg]");
+    await esperar(A, () => /registrada en la bitácora como N° \d+/.test(document.getElementById("toast").textContent));
+    const nVieja = (await A.textContent("#toast")).match(/como N° (\d+)/)[1];
+    await A.click("#concCerrar");
+    const idFolio = await A.evaluate(async rut => {
+      const fs = await import("https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js");
+      const ref = fs.doc(fs.collection(fs.getFirestore(), "pago_documentos"));
+      await fs.setDoc(ref, { rut, fecha: "20072026", monto: 8800, ndoc: "4321", tipo: "33", fuente: "GENERAL", sel: true, dc: "", createdBy: "admin1@example.com", updatedBy: "admin1@example.com", createdAt: fs.serverTimestamp(), updatedAt: fs.serverTimestamp() });
+      return ref.id;
+    }, R[0]);
+    await esperar(A, n => !!document.querySelector(`#tbBit tr[data-id="${n}"]`), nVieja);
+    await A.click(`#tbBit tr[data-id="${nVieja}"]`);
+    await esperar(A, () => !!document.getElementById("nFolios"));
+    assert.match(await A.textContent("#hDetail"), /1 pago sin folio/);
+    await A.click("#nFolios");
+    await esperar(A, () => /Folios completados: 1 pago con 1 documento/.test(document.getElementById("toast").textContent));
+    await esperar(A, () => !document.getElementById("nFolios"));
+    const fol = await A.evaluate(async ([n, id]) => {
+      const fs = await import("https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js");
+      const db = fs.getFirestore();
+      return { docs: (await fs.getDoc(fs.doc(db, "pago_nominas", n))).data().pagos[0].docs.map(d => [d.ndoc, d.docId === id]), pendiente: (await fs.getDoc(fs.doc(db, "pago_documentos", id))).exists() };
+    }, [nVieja, idFolio]);
+    assert.deepEqual(fol, { docs: [["4321", true]], pendiente: false });
+    log("nómina antigua (Ver Nómina): se registra sin folio y Completar folios le pone el documento pendiente del mismo proveedor y monto");
   }
   // Pagos a un proveedor: desde su ficha, "Ver pagos" deja el reporte de la bitácora solo con sus pagos, de todas las fechas.
   {

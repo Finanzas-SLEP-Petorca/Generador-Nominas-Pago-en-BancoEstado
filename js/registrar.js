@@ -109,6 +109,27 @@ export function nominaDesdeReporte(rep, ctx) {
   };
 }
 
+// Pagos de una nómina de proveedores registrados sin folio (el banco no informó sus documentos).
+export const sinFolio = n => tipoDe(n) === "proveedores" ? n.pagos.filter(p => p.docs.length && p.docs.every(d => !S(d.ndoc))).length : 0;
+
+// Completar después los folios de esos pagos con los documentos pendientes: los del mismo RUT
+// que suman el monto del pago (como al registrarla). Devuelve { pagos: [{ i, rut, monto, nombre,
+// docs }], sinFolio, avisos }; nada se escribe aquí.
+export function planFolios(n, docs) {
+  const libres = docs.slice(), pagos = [], avisos = [];
+  const val = x => NC.has(x.tipo) ? -x.monto : x.monto;
+  if (tipoDe(n) === "proveedores") n.pagos.forEach((p, i) => {
+    if (!(p.docs.length && p.docs.every(d => !S(d.ndoc)))) return;
+    const suyos = libres.filter(x => x.rut === p.rut);
+    let usa = combinacion(suyos, val, p.monto);
+    if (usa === "varias") { avisos.push(`${fmtRut(p.rut)} ${p.nombre} (${money(p.monto)}): varios documentos pendientes suman ese monto; se usó una combinación, revísala.`); usa = combinacion(suyos, val, p.monto, true) }
+    if (!usa) return;
+    usa.forEach(x => libres.splice(libres.indexOf(x), 1));
+    pagos.push({ i, rut: p.rut, monto: p.monto, nombre: p.nombre, docs: usa.map(x => ({ docId: x.id, fecha: S(x.fecha), monto: x.monto, ndoc: S(x.ndoc), tipo: S(x.tipo), dc: S(x.dc) })) });
+  });
+  return { pagos, sinFolio: sinFolio(n), avisos };
+}
+
 // Documentos (de un mismo RUT) cuyo valor suma `objetivo`: primero uno solo, después
 // combinaciones de más, hasta 16 documentos. Devuelve la lista, null si no hay, o
 // "varias" si hay más de una combinación del menor tamaño (con primera=true, la primera).

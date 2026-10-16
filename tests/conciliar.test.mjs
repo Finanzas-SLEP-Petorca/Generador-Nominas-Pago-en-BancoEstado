@@ -252,7 +252,8 @@ prueba("pago cash: de Pendiente de Cobro a Pagado se registra cobrado en banco; 
 });
 
 console.log("\nNómina del banco que no está en la bitácora");
-const { nominaDesdeReporte } = await import(path.join(raiz, "js/registrar.js"));
+const R_ = await import(path.join(raiz, "js/registrar.js"));
+const { nominaDesdeReporte } = R_;
 const ctxReg = (o = {}) => ({ fuentes: ["GENERAL", "SEP", "JUNJI"], defFuente: "GENERAL", maestro: {}, docs: [], abonos: [], nominas: [], ...o });
 
 prueba("proveedores por documento: un pago por RUT con sus documentos, estados del banco y cruce con pendientes", () => {
@@ -328,6 +329,20 @@ prueba("vista Ver Nómina (sin documentos): un pago por fila con su cuenta; los 
   const amb = nominaDesdeReporte(leerReporteBanco([...cabecera("900781", "PAGO_P01", "$1.500", 1, "Aceptada"), H_PROV, prov(R1, "PROVEEDOR UNO", "$ 1.500", "Pagado")]),
     ctxReg({ docs: [{ id: "a", rut: n1, ndoc: "1", monto: 1000 }, { id: "b", rut: n1, ndoc: "2", monto: 500 }, { id: "c", rut: n1, ndoc: "3", monto: 1000 }] }));
   assert.equal(amb.pagos[0].docs.length, 2); assert.match(amb.avisos[0], /varios documentos pendientes/);
+});
+
+prueba("completar folios después: los pagos sin folio toman los pendientes del mismo RUT que suman su monto", () => {
+  const { planFolios, sinFolio } = R_;
+  const n = { num: 40, estado: "cargada", pagos: [
+    { rut: n1, nombre: "UNO", monto: 1500, docs: [{ ndoc: "", monto: 1500 }] },
+    { rut: n2, nombre: "DOS", monto: 900, docs: [{ ndoc: "", monto: 900 }] },
+    { rut: n3, nombre: "TRES", monto: 700, docs: [{ ndoc: "55", monto: 700 }] }] };
+  assert.equal(sinFolio(n), 2);
+  const plan = planFolios(n, [{ id: "a", rut: n1, ndoc: "10", tipo: "33", fecha: "01072026", monto: 2000 }, { id: "b", rut: n1, ndoc: "11", tipo: "61", fecha: "02072026", monto: 500 },
+    { id: "c", rut: n2, ndoc: "12", tipo: "33", monto: 800 }]);
+  assert.deepEqual(plan.pagos.map(x => [x.i, x.docs.map(d => d.docId + ":" + d.ndoc).join("+")]), [[0, "a:10+b:11"]]);   // la NC resta; DOS no calza
+  assert.equal(plan.sinFolio, 2);
+  assert.equal(sinFolio({ ...n, tipo: "abonos" }), 0);
 });
 
 console.log("\nBarrido con Mis Nóminas");
