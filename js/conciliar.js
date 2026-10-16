@@ -99,9 +99,13 @@ export function conciliar(rep, n) {
   if (rep.montoTotal && rep.montoTotal !== n.total)
     avisos.push(`El total del banco (${money(rep.montoTotal)}) no cuadra con el de la nómina (${money(n.total)}).`);
 
-  // Una entrada por RUT: en el formato por documento el mismo pago viene repetido.
-  const porRut = new Map();
-  rep.pagos.forEach(f => {
+  // Por documento, una entrada por RUT: el mismo pago viene repetido en varias filas.
+  // En las vistas por pago, cada fila es un pago: el mismo RUT puede venir más de
+  // una vez (con otro monto), así que cada pago toma la fila de su RUT y su monto.
+  const porRut = new Map(), filasRut = new Map(), usadas = new Set();
+  rep.pagos.forEach((f, k) => {
+    if (!filasRut.has(f.rut)) filasRut.set(f.rut, []);
+    filasRut.get(f.rut).push(k);
     const a = porRut.get(f.rut);
     if (!a) porRut.set(f.rut, { ...f, suma: f.monto });
     else {
@@ -109,13 +113,26 @@ export function conciliar(rep, n) {
       if (llave(a.estado) !== llave(f.estado) || S(a.motivo) !== S(f.motivo)) a.conflicto = true;
     }
   });
+  const filaDe = new Map();
+  if (rep.porDocumento) n.pagos.forEach((p, i) => { if (porRut.has(p.rut)) { filaDe.set(i, porRut.get(p.rut)); filasRut.get(p.rut).forEach(k => usadas.add(k)) } });
+  else {
+    // Primero los que calzan en RUT y monto; después, la fila libre que quede de su RUT.
+    const tomar = (i, k) => { usadas.add(k); filaDe.set(i, { ...rep.pagos[k], suma: rep.pagos[k].monto }) };
+    // Más filas que pagos con el mismo RUT y monto, y con resultados distintos: no se sabe cuál es; a mano.
+    const clave = (rut, monto) => rut + "|" + monto;
+    const nPagos = new Map(); n.pagos.forEach(p => nPagos.set(clave(p.rut, p.monto), (nPagos.get(clave(p.rut, p.monto)) || 0) + 1));
+    const dudosa = (rut, monto) => { const fs = rep.pagos.filter(f => f.rut === rut && f.monto === monto);
+      return fs.length > (nPagos.get(clave(rut, monto)) || 0) && new Set(fs.map(f => llave(f.estado) + "|" + S(f.motivo))).size > 1 };
+    n.pagos.forEach((p, i) => {
+      if (dudosa(p.rut, p.monto)) { filaDe.set(i, { ...rep.pagos.find(f => f.rut === p.rut), conflicto: true }); (filasRut.get(p.rut) || []).forEach(k => { if (rep.pagos[k].monto === p.monto) usadas.add(k) }); return }
+      const k = (filasRut.get(p.rut) || []).find(k => !usadas.has(k) && rep.pagos[k].monto === p.monto); if (k !== undefined) tomar(i, k) });
+    n.pagos.forEach((p, i) => { if (filaDe.has(i)) return; const k = (filasRut.get(p.rut) || []).find(k => !usadas.has(k)); if (k !== undefined) tomar(i, k) });
+  }
 
-  const vistos = new Set();
   n.pagos.forEach((p, i) => {
-    const f = porRut.get(p.rut);
+    const f = filaDe.get(i);
     const quien = `${fmtRut(p.rut)} ${p.nombre}`;
     if (!f) { avisos.push(`${quien}: el banco no lo informa en este archivo.`); return }
-    vistos.add(p.rut);
     if (f.conflicto) { avisos.push(`${quien}: el archivo trae más de un resultado para el mismo RUT; regístralo a mano.`); return }
     // Por documento, "Monto Total $" es el de cada documento: el pago es la suma.
     const montoOk = isNaN(f.monto) || f.monto === p.monto || f.suma === p.monto;
@@ -140,9 +157,9 @@ export function conciliar(rep, n) {
     if (p.estado === t.estado && S(p.motivo) === motivo && (cobro === undefined || S(p.cobro) === cobro)) iguales.push(item);
     else cambios.push(item);
   });
-  porRut.forEach((f, rut) => {
-    if (!vistos.has(rut)) avisos.push(`${fmtRut(rut)} ${f.nombre}: viene en el archivo pero no es un pago de esta nómina.`);
-  });
+  const sobran = new Set();
+  rep.pagos.forEach((f, k) => { if (!usadas.has(k)) sobran.add(rep.porDocumento ? f.rut : k) });
+  sobran.forEach(x => { const f = rep.porDocumento ? porRut.get(x) : rep.pagos[x]; avisos.push(`${fmtRut(f.rut)} ${f.nombre}${rep.porDocumento ? "" : " (" + money(f.monto) + ")"}: viene en el archivo pero no es un pago de esta nómina.`) });
   return { cambios, iguales, avisos, detalle, reintegrados };
 }
 

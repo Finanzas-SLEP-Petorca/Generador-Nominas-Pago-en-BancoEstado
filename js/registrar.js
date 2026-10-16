@@ -8,7 +8,7 @@
 import { S, normRut, fmtRut, money, cleanName, conceptoDeNombre, tipoDe } from "./formato.js";
 import { tipoDoc, bancoCodigo, formaAbono, fuenteFromName } from "./importar.js";
 import { traducirEstado } from "./conciliar.js";
-import { FORMAS_SIN_CUENTA } from "./catalogos.js";
+import { FORMAS_SIN_CUENTA, NC } from "./catalogos.js";
 
 const ddmmaaaa = v => { const m = S(v).match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/); return m ? m[1].padStart(2, "0") + m[2].padStart(2, "0") + m[3] : S(v).replace(/\D/g, "") };
 const iso = v => { const m = S(v).match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/); return m ? `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}` : "" };
@@ -20,8 +20,10 @@ const nDoc = v => S(v).replace(/^0+(?=\d)/, "");
 // consumir: { docs: [ids], abonos: [ids] }, cruzados, resumen, avisos, datosCarga }.
 export function nominaDesdeReporte(rep, ctx) {
   const { fuentes = [], defFuente = "GENERAL", maestro = {}, docs = [], abonos = [], nominas = [] } = ctx;
-  if (rep.vista === "pagos") return { error: "Este archivo es la vista por pago, sin documentos. Para registrar la nómina descarga en BancoEstado la vista Ver Documentos." };
   const abonosTipo = rep.vista === "remuneraciones";
+  // Proveedores en la vista Ver Nómina (una fila por pago, con N° de cuenta y sin documentos: así
+  // las informa el banco en las nóminas más antiguas). Los folios salen de lo pendiente del panel.
+  const porPago = rep.vista === "pagos";
   const nombre = S(rep.nombreNomina);
   const fuente = fuenteFromName(nombre, fuentes) || defFuente;
   const avisos = [];
@@ -29,13 +31,13 @@ export function nominaDesdeReporte(rep, ctx) {
   const porClave = new Map(), pagos = [];
   rep.pagos.forEach(f => {
     const banco = bancoCodigo(f.banco), forma = formaAbono(f.forma);
-    const clave = abonosTipo ? pagos.length : f.rut + "|" + banco + "|" + forma;
+    const clave = abonosTipo || porPago ? pagos.length : f.rut + "|" + banco + "|" + forma;
     let p = porClave.get(clave);
     if (!p) {
       const t = traducirEstado(f.estado);
       const m = maestro[f.rut];
       p = { rut: f.rut, nombre: cleanName(f.nombre), banco, forma,
-        cuenta: abonosTipo ? (FORMAS_SIN_CUENTA.has(forma) ? "" : S(f.cuenta)) : (m && m.banco === banco ? S(m.cuenta) : ""),
+        cuenta: abonosTipo || porPago ? (FORMAS_SIN_CUENTA.has(forma) ? "" : S(f.cuenta)) : (m && m.banco === banco ? S(m.cuenta) : ""),
         monto: 0, estado: t ? t.estado : "pendiente", motivo: t && t.estado === "rechazado" ? S(f.motivo) : "", reint: "", formaBanco: S(f.forma), bancoBanco: S(f.banco), docs: [] };
       // El nombre como lo escribe el banco, para emitir el Detalle de Nómina igual.
       const nombreBco = abonosTipo ? f.nombreTal || S(f.nombre) : S(f.nombre);
@@ -48,15 +50,28 @@ export function nominaDesdeReporte(rep, ctx) {
       porClave.set(clave, p); pagos.push(p);
     }
     if (abonosTipo) { p.monto = f.monto; p.docs.push({ monto: f.monto }) }
+    else if (porPago) p.monto = f.monto;                                     // sus documentos salen del cruce
     else { const monto = f.montodoc || f.monto; p.monto += monto; p.docs.push({ fecha: ddmmaaaa(f.fechadoc), monto, ndoc: S(f.ndoc), tipo: tipoDoc(f.tipodoc), dc: "" }) }
   });
   if (!pagos.length) return { error: "El archivo no trae pagos." };
 
   // Cruce con lo pendiente: documentos por RUT y N° (y tipo si ambos lo traen); abonos por RUT y monto.
   const consumir = { docs: [], abonos: [] };
-  let cruzados = 0;
+  let cruzados = 0, sinFolio = 0;
   const libres = abonosTipo ? abonos.slice() : docs.slice();
-  pagos.forEach(p => p.docs.forEach(d => {
+  // Vista por pago: el pago se cruza con los documentos pendientes de su RUT que suman su monto
+  // (uno solo o varios; las notas de crédito restan). Si no se encuentran, queda sin folio.
+  if (porPago) pagos.forEach(p => {
+    const suyos = libres.filter(x => x.rut === p.rut);
+    const val = x => NC.has(x.tipo) ? -x.monto : x.monto;
+    const elegidos = combinacion(suyos, val, p.monto);
+    if (elegidos === "varias") avisos.push(`${fmtRut(p.rut)} ${p.nombre} (${money(p.monto)}): varios documentos pendientes suman ese monto; se usó una combinación, revísala.`);
+    const usa = Array.isArray(elegidos) ? elegidos : elegidos === "varias" ? combinacion(suyos, val, p.monto, true) : null;
+    if (!usa) { sinFolio++; p.docs.push({ fecha: "", monto: p.monto, ndoc: "", tipo: "", dc: "" }); return }
+    usa.forEach(x => { libres.splice(libres.indexOf(x), 1); cruzados++; consumir.docs.push(x.id);
+      p.docs.push({ docId: x.id, fecha: S(x.fecha), monto: x.monto, ndoc: S(x.ndoc), tipo: S(x.tipo), dc: S(x.dc) }) });
+  });
+  else pagos.forEach(p => p.docs.forEach(d => {
     const k = abonosTipo
       ? libres.findIndex(a => a.rut === p.rut && a.monto === d.monto)
       : libres.findIndex(x => x.rut === p.rut && nDoc(x.ndoc) === nDoc(d.ndoc) && (!x.tipo || !d.tipo || x.tipo === d.tipo));
@@ -71,8 +86,8 @@ export function nominaDesdeReporte(rep, ctx) {
   // Documentos que ya están en otra nómina de la bitácora: se avisa (puede ser el nuevo pago de un rechazo).
   if (!abonosTipo) {
     const en = new Map();
-    nominas.filter(n => n.estado !== "anulada" && tipoDe(n) !== "abonos").forEach(n => (n.pagos || []).forEach(p => (p.docs || []).forEach(d => en.set(p.rut + "|" + nDoc(d.ndoc), n.num))));
-    pagos.forEach(p => p.docs.forEach(d => { const num = en.get(p.rut + "|" + nDoc(d.ndoc)); if (num) avisos.push(`${fmtRut(p.rut)} ${p.nombre}: el documento ${d.ndoc} ya está en la nómina N° ${num}.`) }));
+    nominas.filter(n => n.estado !== "anulada" && tipoDe(n) !== "abonos").forEach(n => (n.pagos || []).forEach(p => (p.docs || []).forEach(d => { if (S(d.ndoc)) en.set(p.rut + "|" + nDoc(d.ndoc), n.num) })));
+    pagos.forEach(p => p.docs.forEach(d => { const num = S(d.ndoc) && en.get(p.rut + "|" + nDoc(d.ndoc)); if (num) avisos.push(`${fmtRut(p.rut)} ${p.nombre}: el documento ${d.ndoc} ya está en la nómina N° ${num}.`) }));
   }
 
   // Líneas como las del archivo que se sube al banco, para que la nómina quede igual a una generada aquí.
@@ -87,9 +102,28 @@ export function nominaDesdeReporte(rep, ctx) {
   const fechaPago = iso(rep.fechaPago);
   return {
     tipo: abonosTipo ? "abonos" : "proveedores", fuente, concepto, archivo: nombre || "nomina_" + rep.operacion, total, pagos, lineas,
-    consumir, cruzados, avisos,
+    consumir, cruzados, sinFolio, avisos,
     resumen: { pagados: cuenta("pagado").length, rechazados: cuenta("rechazado").length, pendientes: cuenta("pendiente").length, documentos: pagos.reduce((a, p) => a + p.docs.length, 0) },
     datosCarga: { fechaCarga: fechaPago, fechaPago, operacion: S(rep.operacion), obs: "Registrada desde el Detalle de Nómina de BancoEstado", nombreBanco: nombre, convenioBanco: S(rep.convenio),
       ...(S(rep.conceptoPago) ? { conceptoBanco: S(rep.conceptoPago) } : {}) }
   };
+}
+
+// Documentos (de un mismo RUT) cuyo valor suma `objetivo`: primero uno solo, después
+// combinaciones de más, hasta 16 documentos. Devuelve la lista, null si no hay, o
+// "varias" si hay más de una combinación del menor tamaño (con primera=true, la primera).
+function combinacion(docs, val, objetivo, primera = false) {
+  const lista = docs.slice(0, 16);
+  for (let tam = 1; tam <= lista.length; tam++) {
+    const hallados = [];
+    const buscar = (desde, elegidos, suma) => {
+      if (hallados.length > 1) return;
+      if (elegidos.length === tam) { if (suma === objetivo) hallados.push(elegidos.slice()); return }
+      for (let i = desde; i < lista.length; i++) { elegidos.push(lista[i]); buscar(i + 1, elegidos, suma + val(lista[i])); elegidos.pop() }
+    };
+    buscar(0, [], 0);
+    if (hallados.length === 1 || (hallados.length && primera)) return hallados[0];
+    if (hallados.length > 1) return "varias";
+  }
+  return null;
 }

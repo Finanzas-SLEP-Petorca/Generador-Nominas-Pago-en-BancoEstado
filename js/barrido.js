@@ -84,7 +84,7 @@ export function cruzarMisNominas(listas, nominas) {
 
 const tipoNota = b => b.tipo === "abonos"
   ? "Descarga su Detalle de Nómina (Remuneraciones → Ver Nómina) y súbelo con Cargar reporte del banco para registrarla."
-  : "Descarga su Detalle de Nómina en la vista Ver Documentos y súbelo con Cargar reporte del banco para registrarla.";
+  : "Descarga su Detalle de Nómina en la vista Ver Documentos (si el banco no muestra documentos, como en las más antiguas, en Ver Nómina) y súbelo con Cargar reporte del banco para registrarla.";
 
 // Hoja de Excel del barrido (para ir marcando el avance).
 export function barridoHojas(cruce, fmt) {

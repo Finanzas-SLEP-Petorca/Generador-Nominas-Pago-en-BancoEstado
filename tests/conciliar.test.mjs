@@ -305,9 +305,29 @@ prueba("en proceso queda pendiente con aviso; la vista por pago no sirve; un doc
   assert.equal(r.pagos[0].estado, "pendiente");
   assert.equal(r.avisos.length, 2);
   assert.match(r.avisos[0], /Aceptado en validación/); assert.match(r.avisos[1], /ya está en la nómina N° 4/);
-  assert.match(nominaDesdeReporte(normal(), ctxReg()).error, /Ver Documentos/);
   // repartir lo marca para registrarlo
   assert.equal(repartir([{ archivo: "x.xlsx", rep: leerReporteBanco(filas) }], [])[0].sinNomina, true);
+});
+
+prueba("vista Ver Nómina (sin documentos): un pago por fila con su cuenta; los folios salen de los pendientes que suman el monto", () => {
+  const rep = leerReporteBanco([...cabecera("900780", "PAGO_P01_PROVEEDORES", "$4.300", 3, "Aceptada Parcial"), H_PROV,
+    prov(R1, "PROVEEDOR UNO", "$ 1.000", "Pagado"), prov(R1, "PROVEEDOR UNO", "$ 2.500", "Pagado"), prov(R2, "PROVEEDOR DOS", "$ 800", "Rechazado", "CUENTA CERRADA")]);
+  assert.equal(rep.vista, "pagos");
+  const pend = [{ id: "d1", rut: n1, ndoc: "10", tipo: "33", fecha: "01072026", monto: 1000 }, { id: "d2", rut: n1, ndoc: "11", tipo: "33", fecha: "02072026", monto: 2000 },
+    { id: "d3", rut: n1, ndoc: "12", tipo: "34", fecha: "03072026", monto: 500 }, { id: "d9", rut: n3, ndoc: "10", tipo: "33", monto: 800 }];
+  const r = nominaDesdeReporte(rep, ctxReg({ docs: pend }));
+  assert.equal(r.tipo, "proveedores");
+  assert.deepEqual(r.pagos.map(p => [p.rut, p.monto, p.cuenta, p.estado, p.docs.map(d => d.ndoc || "sin folio").join("+")]),
+    [[n1, 1000, "1234567", "pagado", "10"], [n1, 2500, "1234567", "pagado", "11+12"], [n2, 800, "1234567", "rechazado", "sin folio"]]);
+  assert.deepEqual(r.consumir.docs, ["d1", "d2", "d3"]); assert.equal(r.cruzados, 3); assert.equal(r.sinFolio, 1);
+  assert.deepEqual(r.avisos, []);
+  // Ya registrada: el mismo archivo calza pago por pago, aunque el RUT venga dos veces.
+  const c = conciliar(rep, { id: "31", num: 31, estado: "cargada", total: r.total, pagos: r.pagos, ...r.datosCarga });
+  assert.deepEqual([c.cambios.length, c.iguales.length, c.avisos], [0, 3, []]);
+  // Dos combinaciones posibles para el mismo monto: se usa una y se avisa.
+  const amb = nominaDesdeReporte(leerReporteBanco([...cabecera("900781", "PAGO_P01", "$1.500", 1, "Aceptada"), H_PROV, prov(R1, "PROVEEDOR UNO", "$ 1.500", "Pagado")]),
+    ctxReg({ docs: [{ id: "a", rut: n1, ndoc: "1", monto: 1000 }, { id: "b", rut: n1, ndoc: "2", monto: 500 }, { id: "c", rut: n1, ndoc: "3", monto: 1000 }] }));
+  assert.equal(amb.pagos[0].docs.length, 2); assert.match(amb.avisos[0], /varios documentos pendientes/);
 });
 
 console.log("\nBarrido con Mis Nóminas");
